@@ -32,5 +32,5 @@ def get_interface_mac(name):
 
 def get_interface_ip(name):
     ip_cmd = os.popen(f"ip addr show {name} | grep 'inet '").read()
-    ip_address = ip_cmd.split()[1]
+    ip_address = ip_cmd.split()[1].strip('/8')
     return ip_address
