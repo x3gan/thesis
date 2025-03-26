@@ -2,6 +2,7 @@ import random
 import sys
 import threading
 from time import sleep
+from datetime import datetime
 
 from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello
 from scapy.layers.inet import IP
@@ -28,7 +29,7 @@ class OSPF:
         self.areaid           = ospf_config['areaid']
         self.netmask          = ospf_config['netmask']
         self.neighbours       = []
-        self.neighbour_states = {intf : {'rid' : None, 'state' : 'DOWN'} for
+        self.neighbour_states = {intf : {'rid' : None, 'last_seen': None, 'state' : 'DOWN'} for
                                  intf in self.interfaces}
 
     def display_info(self):
@@ -68,7 +69,25 @@ class OSPF:
                     )
             )
             sendp(hello_packet, iface= intf, verbose= False)
-            sleep(10)
+            sleep(HELLO_INTERVAL)
+
+    def check_on_neighbours(self, intf):
+        while True:
+            # Alszik 5 masodpercet, hogy ne legyen tul gyakori a lekerdezes
+            sleep(5)
+            print('Checking on neighbours')
+
+            # Lista masolat, kulonben hibat iteralas kozben nem lehetne mosoditani
+            for neighbour in list(self.neighbours):
+                last_seen = self.neighbour_states[intf]['last_seen']
+
+                if not last_seen:
+                    continue
+
+                if (datetime.now() - last_seen).total_seconds() > DEAD_INTERVAL:
+                    print(f'Neighbour {neighbour} is down on interface {intf}')
+                    self.neighbours.remove(neighbour)
+                    self.neighbour_states[intf] = {'rid': None, 'last_seen': None, 'state': 'DOWN'}
 
     def receiving_packets(self, intf):
         print(f'Receiving packets on {intf}')
@@ -93,10 +112,10 @@ class OSPF:
                                 print(f'Neighbour {neighbour} added')
                             else:
                                 print(f'{neighbour} already in neighbours')
+                        self.neighbour_states[intf]['last_seen'] = datetime.now()
                     print(f'Neighbour state: {self.neighbour_states[intf]}')
                 else:
                     print('No OSPF Header found')
-
 
 if __name__ == '__main__':
     filepath = 'ospf.yml'
@@ -105,6 +124,14 @@ if __name__ == '__main__':
     ospf = OSPF(device_name, filepath)
     ospf.display_info()
 
-    for interface in ospf.interfaces.items():
-        threading.Thread(target= ospf.receiving_packets, args= (interface[0],)).start()
-        threading.Thread(target= ospf.send_hello_packet, args= (interface[0],)).start()
+    threads = []
+
+    for interface in ospf.interfaces:
+        t1 = threading.Thread(target=ospf.receiving_packets, args=(interface,))
+        t2 = threading.Thread(target=ospf.send_hello_packet, args=(interface,))
+        t3 = threading.Thread(target=ospf.check_on_neighbours, args=(interface,))
+
+        threads.extend([t1, t2, t3])
+
+    for t in threads:
+        t.start()
