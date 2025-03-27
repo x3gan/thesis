@@ -1,3 +1,4 @@
+import logging
 import random
 import sys
 import threading
@@ -18,6 +19,8 @@ MULTICAST_MAC = '01:00:5e:00:00:05'
 HELLO_INTERVAL = 10
 DEAD_INTERVAL = 40
 
+logging.basicConfig(level=logging.INFO)
+
 class OSPF:
     def __init__(self, name, config_path):
         self.name = name
@@ -28,9 +31,20 @@ class OSPF:
         self.rid              = ospf_config['rid']
         self.areaid           = ospf_config['areaid']
         self.netmask          = ospf_config['netmask']
-        self.neighbours       = []
-        self.neighbour_states = {intf : {'rid' : None, 'last_seen': None, 'state' : 'DOWN'} for
-                                 intf in self.interfaces}
+        """
+        self.neighbour_states = {
+            'eth0': {
+                '10.0.0.2': {'last_seen': datetime.now(), 'state': 'TWOWAY'},
+                '10.0.0.3': {'last_seen': datetime.now(), 'state': 'INIT'}
+            },
+            'eth1': {
+                '10.0.0.4': {'last_seen': datetime.now(), 'state': 'TWOWAY'}
+            }
+        }...
+        """
+        self.neighbour_states = {
+            intf: {} for intf in self.interfaces
+        }
 
     def display_info(self):
         print(f'OSPF Name: {self.name}')
@@ -41,8 +55,19 @@ class OSPF:
         print(f'OSPF Neighbour States: {self.neighbour_states}')
 
     def send_hello_packet(self, intf):
+        """
+        :param intf:
+        :return:
+        """
         while True:
-            print(f'On {self.interfaces[intf]["ip"]} known neighbours are: {self.neighbours}')
+            neighbours = [
+                neighbour for neighbour, state in self.neighbour_states[intf].items()
+                if state['state'] != States.DOWN
+            ]
+
+            print(f'Az {self.interfaces[intf]["ip"]} interfészen az ismert szomszédok'
+                  f' {neighbours}')
+
             hello_packet = (
                     Ether(
                         dst= MULTICAST_MAC,
@@ -65,29 +90,31 @@ class OSPF:
                         prio= self.prio,
                         hellointerval= HELLO_INTERVAL,
                         deadinterval= DEAD_INTERVAL,
-                        neighbors= self.neighbours
+                        neighbors= neighbours
                     )
             )
             sendp(hello_packet, iface= intf, verbose= False)
+            logging.info(f'[{datetime.now()}] Az {self.rid} - {intf} Hello csomagot küldött')
             sleep(HELLO_INTERVAL)
 
     def check_on_neighbours(self, intf):
         while True:
-            # Alszik 5 masodpercet, hogy ne legyen tul gyakori a lekerdezes
+            # Alszik 5 másodpercet, hogy ne legyen túl gyakori a "lekérdezés"
             sleep(5)
-            print('Checking on neighbours')
+            print('Szomszéd megfigyelése...')
 
-            # Lista masolat, kulonben hibat iteralas kozben nem lehetne mosoditani
-            for neighbour in list(self.neighbours):
-                last_seen = self.neighbour_states[intf]['last_seen']
+            # Lista-másolat, különben hibát dob, iterálás közben nem lehetne módosítani
+            for neighbour in list(self.neighbour_states[intf]):
+                last_seen = self.neighbour_states[intf][neighbour]['last_seen']
 
                 if not last_seen:
                     continue
 
                 if (datetime.now() - last_seen).total_seconds() > DEAD_INTERVAL:
-                    print(f'Neighbour {neighbour} is down on interface {intf}')
-                    self.neighbours.remove(neighbour)
-                    self.neighbour_states[intf] = {'rid': None, 'last_seen': None, 'state': 'DOWN'}
+
+                    logging.info(f'[{datetime.now()}] {neighbour} szomszéd nem válaszol.')
+                    self.neighbour_states[intf][neighbour] = {'last_seen': None, 'state':
+                        States.DOWN}
 
     def receiving_packets(self, intf):
         print(f'Receiving packets on {intf}')
@@ -98,22 +125,39 @@ class OSPF:
                 continue
             else:
                 if packet[0].haslayer(OSPF_Hdr):
-                    if packet[0][OSPF_Hdr].type == 1 and packet[0][OSPF_Hdr].src != self.rid:
-                        neighbour = packet[0][OSPF_Hdr].src
-                        if self.rid in packet[0][OSPF_Hello].neighbors and neighbour in self.neighbours:
-                            print(f'{neighbour} already heard from me.')
-                            self.neighbour_states[intf]['rid'] = neighbour
-                            self.neighbour_states[intf]['state'] = States.TWOWAY
-                        else:
-                            if neighbour not in self.neighbours:
-                                self.neighbours.append(neighbour)
-                                self.neighbour_states[intf]['rid']   = neighbour
-                                self.neighbour_states[intf]['state'] = States.INIT
-                                print(f'Neighbour {neighbour} added')
-                            else:
-                                print(f'{neighbour} already in neighbours')
-                        self.neighbour_states[intf]['last_seen'] = datetime.now()
-                    print(f'Neighbour state: {self.neighbour_states[intf]}')
+                    ospf_hdr = packet[0][OSPF_Hdr]
+                    if ospf_hdr.type == 1 and ospf_hdr.src != self.rid:
+                        neighbour = ospf_hdr.src
+
+                        if neighbour not in self.neighbour_states[intf]:
+                            self.neighbour_states[intf][neighbour] = {
+                                'last_seen': datetime.now(),
+                                'state'    : States.INIT
+                            }
+                            logging.info(f'[{datetime.now()}] Új szomszéd került a listába: {neighbour}')
+
+                        if (
+                            self.rid in packet[0][OSPF_Hello].neighbors and
+                            neighbour in self.neighbour_states[intf]
+                        ):
+                            print(f'Listában lévő {neighbour} szomszéd már hallott rólam.')
+                            self.neighbour_states[intf][neighbour]['state'] = States.TWOWAY
+
+                            logging.info(f'[{datetime.now()}] {neighbour} : {States.INIT} ->'
+                                         f' {States.TWOWAY}')
+                        elif (
+                            self.rid in packet[0][OSPF_Hello].neighbors and
+                            neighbour not in self.neighbour_states[intf]
+                        ):
+                            logging.warning(f'{neighbour} már hallott rólam, de ő nincs a '
+                                            f'listámban')
+
+                            self.neighbour_states[intf][neighbour] = {
+                                'last_seen': datetime.now(),
+                                'state'    : States.TWOWAY
+                            }
+
+                        self.neighbour_states[intf][neighbour]['last_seen'] = datetime.now()
                 else:
                     print('No OSPF Header found')
 
