@@ -34,11 +34,11 @@ class OSPF:
         """
         self.neighbour_states = {
             'eth0': {
-                '10.0.0.2': {'last_seen': datetime.now(), 'state': 'TWOWAY'},
-                '10.0.0.3': {'last_seen': datetime.now(), 'state': 'INIT'}
+                '10.0.0.2': {'last_seen': datetime.now(), 'state': 'TWOWAY', 'is_master': None},
+                '10.0.0.3': {'last_seen': datetime.now(), 'state': 'INIT', 'is_master': False}
             },
             'eth1': {
-                '10.0.0.4': {'last_seen': datetime.now(), 'state': 'TWOWAY'}
+                '10.0.0.4': {'last_seen': datetime.now(), 'state': 'TWOWAY', 'is_master': True},
             }
         }...
         """
@@ -132,7 +132,8 @@ class OSPF:
                         if neighbour not in self.neighbour_states[intf]:
                             self.neighbour_states[intf][neighbour] = {
                                 'last_seen': datetime.now(),
-                                'state'    : States.INIT
+                                'state'    : States.INIT,
+                                'is_master': None
                             }
                             logging.info(f'[{datetime.now()}] Új szomszéd került a listába: {neighbour}')
 
@@ -158,8 +159,30 @@ class OSPF:
                             }
 
                         self.neighbour_states[intf][neighbour]['last_seen'] = datetime.now()
+
+                        if self.neighbour_states[intf][neighbour]['state'] == States.TWOWAY:
+                            self.neighbour_states[intf][neighbour]['state'] = States.EXSTART
+                            logging.info(f'[{datetime.now()}] {neighbour} : {States.TWOWAY} ->'
+                                         f' {States.EXSTART}')
+                            self.who_is_master(intf, neighbour)
+
+                            status = "Slave" \
+                                        if self.neighbour_states[intf][neighbour]['is_master'] else \
+                                     "Master"
+                            logging.info(f'{self.rid} : {status} and '
+                                         f'{neighbour} : {"Slave" if status == "Master" else "Master"} '
+                                         f'have decided on relationships.')
+                            self.neighbour_states[intf][neighbour]['state'] = States.EXCHANGE
+
                 else:
-                    print('No OSPF Header found')
+                    # Nem OSPF csomag érkezett, várakozik a következőre
+                    print('...')
+
+    def who_is_master(self, intf, neighbour_rid):
+        if neighbour_rid > self.rid:
+            self.neighbour_states[intf][neighbour_rid]['is_master'] = True
+        else:
+            self.neighbour_states[intf][neighbour_rid]['is_master'] = False
 
 if __name__ == '__main__':
     filepath = 'ospf.yml'
