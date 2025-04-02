@@ -26,9 +26,11 @@ def get_device_interfaces_w_mac():
 
     return interfaces
 
+
 def get_interface_mac(name):
     mac = os.popen(f'cat /sys/class/net/{name}/address').read().strip()
     return mac
+
 
 def get_interface_ip(name):
     ip_cmd = os.popen(f"ip addr show {name} | grep 'inet '").read()
