@@ -147,6 +147,7 @@ class OSPF:
                                 'mac'      : packet[0][Ether].src
                             }
                             logging.info(f'[{datetime.now()}] Új szomszéd került a listába: {neighbour}')
+                            self.display_info()
 
                         if (
                                 self.rid in packet[0][OSPF_Hello].neighbors and
