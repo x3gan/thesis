@@ -1,4 +1,5 @@
 import logging
+import queue
 import random
 import sys
 import threading
@@ -22,6 +23,9 @@ MULTICAST_MAC = '01:00:5e:00:00:05'
 HELLO_INTERVAL = 10
 DEAD_INTERVAL = 40
 
+HELLO_PRIORITY = 1
+DEFAULT_PRIORITY = 5
+
 logging.basicConfig(level=logging.INFO)
 
 class OSPF:
@@ -40,6 +44,7 @@ class OSPF:
         }
         self.lsdb = LSDB()
 
+        self.packet_queue          = queue.PriorityQueue()
         self.neighbour_states_lock = threading.Lock()
 
     def display_info(self):
@@ -115,7 +120,7 @@ class OSPF:
                     logging.info(f'[{datetime.now()}] {self.rid} - {intf} : {neighbour.rid} '
                                  f'szomszéd nem válaszol.')
 
-                self.neighbour_states[intf].remove(neighbour)
+                    self.neighbour_states[intf].remove(neighbour)
 
     def process_hello_packet(self, intf, packet, neighbour_rid):
         existing_neighbour = next(
@@ -148,9 +153,6 @@ class OSPF:
                 logging.info(f'[{datetime.now()}] {existing_neighbour.rid} : TWOWAY -> EXSTART')
                 self.send_dbd_packet(intf, neighbour_rid)
 
-        if existing_neighbour and existing_neighbour.is_master is None and existing_neighbour.state == States.EXSTART:
-            self.send_dbd_packet(intf, neighbour_rid)
-
     def process_dbd_packet(self, intf, packet, neighbour_rid):
         """
         OSPF Database Description (DBD) csomagok feldolgozása.
@@ -174,11 +176,33 @@ class OSPF:
                     if self.rid == neighbour_rid:
                         continue
 
-                    if ospf_hdr.type == 1:
-                        self.process_hello_packet(intf, packet[0], neighbour_rid)
-                    if ospf_hdr.type == 2:
-                        self.process_dbd_packet(intf, packet[0], neighbour_rid)
+                    self.sort_packet(
+                        header_type= ospf_hdr.type,
+                        intf= intf,
+                        packet= packet,
+                        neighbour_rid= neighbour_rid
+                    )
 
+
+    def sort_packet(self, header_type, intf, packet, neighbour_rid):
+        if header_type == 1:
+            self.packet_queue.put((HELLO_PRIORITY, (intf, packet[0], neighbour_rid)))
+        if header_type == 2:
+            self.packet_queue.put((DEFAULT_PRIORITY, (intf, packet[0], neighbour_rid)))
+
+    def process_queued_packet(self):
+        while True:
+            try:
+                _, (intf, packet, neighbour_rid) = self.packet_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            header_type = packet[OSPF_Hdr].type
+
+            if header_type == 1:
+                self.process_hello_packet(intf, packet, neighbour_rid)
+            elif header_type == 2:
+                self.process_dbd_packet(intf, packet, neighbour_rid)
 
     def send_dbd_packet(self, intf, neighbour_rid):
         """
@@ -259,12 +283,14 @@ if __name__ == '__main__':
     for interface in ospf.interfaces:
         receiver             = threading.Thread(target=ospf.receiving_packets, args=(interface,))
         hello_packet_sending = threading.Thread(target=ospf.send_hello_packet, args=(interface,))
-        #checking_neighbour   = threading.Thread(target=ospf.check_on_neighbours, args=(interface,))
+        process_packet       = threading.Thread(target=ospf.process_queued_packet, args=())
+        checking_neighbour   = threading.Thread(target=ospf.check_on_neighbours, args=(interface,))
 
         threads.extend([
             receiver,
             hello_packet_sending,
-            #checking_neighbour
+            process_packet,
+            checking_neighbour
         ])
 
     for thread in threads:
