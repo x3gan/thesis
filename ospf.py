@@ -148,10 +148,6 @@ class OSPF:
                 existing_neighbour.state = States.TWOWAY
                 logging.info(f'[{datetime.now()}] {existing_neighbour.rid} : INIT -> TWOWAY')
 
-            if existing_neighbour and existing_neighbour.state == States.TWOWAY:
-                existing_neighbour.state = States.EXSTART
-                logging.info(f'[{datetime.now()}] {existing_neighbour.rid} : TWOWAY -> EXSTART')
-                self.send_dbd_packet(intf, neighbour_rid)
 
     def process_dbd_packet(self, intf, packet, neighbour_rid):
         """
@@ -161,6 +157,8 @@ class OSPF:
         neighbour_rid:
         """
         logging.info(f'[{datetime.now()}] OSPF DBD csomag érkezett {neighbour_rid}-től.')
+        if packet[OSPF_DBDesc].ddseq == 1:
+            print('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
 
     def receiving_packets(self, intf):
         while True:
@@ -271,6 +269,22 @@ class OSPF:
     def generate_router_lsa(self):
         return self.lsdb
 
+    def global_state_watcher(self, intf):
+        while True:
+            for neighbour in self.neighbour_states[intf]:
+                if neighbour.state == States.TWOWAY:
+                    neighbour.state = States.EXSTART
+
+                    logging.info(f'[{datetime.now()}] {self.rid} - {intf} : {neighbour.rid} '
+                                 f'TWOWAY -> EXSTART')
+                    sleep(2)
+                    self.send_dbd_packet(intf, neighbour.rid)
+                elif neighbour.state == States.EXSTART:
+                    pass
+                elif neighbour.state == States.EXCHANGE:
+                    pass
+
+
 if __name__ == '__main__':
     filepath = 'ospf.yml'
     device_name = sys.argv[1]
@@ -285,12 +299,14 @@ if __name__ == '__main__':
         hello_packet_sending = threading.Thread(target=ospf.send_hello_packet, args=(interface,))
         process_packet       = threading.Thread(target=ospf.process_queued_packet, args=())
         checking_neighbour   = threading.Thread(target=ospf.check_on_neighbours, args=(interface,))
+        state_watcher        = threading.Thread(target=ospf.global_state_watcher, args=(interface,))
 
         threads.extend([
             receiver,
             hello_packet_sending,
             process_packet,
-            checking_neighbour
+            checking_neighbour,
+            state_watcher
         ])
 
     for thread in threads:
