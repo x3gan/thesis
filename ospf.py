@@ -100,6 +100,8 @@ class OSPF:
                     )
             )
             sendp(hello_packet, iface= intf, verbose= False)
+            utils.write_pcap_file(f'{self.name}_{intf}', hello_packet)
+
             logging.info(f'[{datetime.now()}] Az {self.rid} - {intf} Hello csomagot küldött')
             sleep(HELLO_INTERVAL)
 
@@ -148,7 +150,6 @@ class OSPF:
                 existing_neighbour.state = States.TWOWAY
                 logging.info(f'[{datetime.now()}] {existing_neighbour.rid} : INIT -> TWOWAY')
 
-
     def process_dbd_packet(self, intf, packet, neighbour_rid):
         """
         OSPF Database Description (DBD) csomagok feldolgozása.
@@ -156,9 +157,20 @@ class OSPF:
         packet:
         neighbour_rid:
         """
+        neighbour = next(
+            (neighbour for neighbour in self.neighbour_states[intf] if
+             neighbour.rid == neighbour_rid),
+            None
+        )
+
         logging.info(f'[{datetime.now()}] OSPF DBD csomag érkezett {neighbour_rid}-től.')
         if packet[OSPF_DBDesc].ddseq == 1:
             print('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+            if neighbour.is_master is None and neighbour.state == States.EXSTART:
+                if self.rid < neighbour_rid:
+                    neighbour.is_master = False
+                else:
+                    neighbour.is_master = True
 
     def receiving_packets(self, intf):
         while True:
@@ -168,6 +180,7 @@ class OSPF:
                 continue
             else:
                 if packet[0].haslayer(OSPF_Hdr):
+                    utils.write_pcap_file(f'{self.name}_{intf}', packet)
                     ospf_hdr = packet[0][OSPF_Hdr]
                     neighbour_rid = ospf_hdr.src
 
@@ -180,7 +193,7 @@ class OSPF:
                         packet= packet,
                         neighbour_rid= neighbour_rid
                     )
-
+                    utils.write_pcap_file('{self.name}_{intf}', packet)
 
     def sort_packet(self, header_type, intf, packet, neighbour_rid):
         if header_type == 1:
@@ -245,6 +258,7 @@ class OSPF:
 
             dbd_packet = default_layers / dbd_packet_layer
             sendp(dbd_packet, iface=intf, verbose=False)
+            utils.write_pcap_file(f'{self.name}_{intf}', dbd_packet)
 
             logging.info(f'[{datetime.now()}] {self.rid} - {intf} kezdeti ures DBD csomagot '
                          f'kuldott {neighbour.rid} -nak')
@@ -262,6 +276,7 @@ class OSPF:
 
             dbd_packet = default_layers / dbd_packet_layer
             sendp(dbd_packet, iface=intf, verbose=False)
+            utils.write_pcap_file(f'{self.name}_{intf}', dbd_packet)
 
             logging.info(f'[{datetime.now()}] {self.rid} - {intf} DBD csomagot kuldott '
                          f'{neighbour}-nak')
@@ -278,14 +293,15 @@ class OSPF:
                     logging.info(f'[{datetime.now()}] {self.rid} - {intf} : {neighbour.rid} '
                                  f'TWOWAY -> EXSTART')
                     sleep(2)
-                    self.send_dbd_packet(intf, neighbour.rid)
                 elif neighbour.state == States.EXSTART:
-                    pass
+                    self.send_dbd_packet(intf, neighbour.rid)
                 elif neighbour.state == States.EXCHANGE:
                     pass
 
 
 if __name__ == '__main__':
+    utils.cleanup()
+
     filepath = 'ospf.yml'
     device_name = sys.argv[1]
 
