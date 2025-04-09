@@ -14,7 +14,8 @@ def cleanup():
 
     for log in logs_folder:
         try:
-            os.remove(f'logs/{log}')
+            if log.endswith('.pcap'):
+                os.remove(f'logs/{log}')
         except FileNotFoundError:
             continue
 

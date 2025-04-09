@@ -3,22 +3,17 @@ router:
     interfaces:
       R1-eth0 : '10.0.0.1'
       R1-eth1 : '10.0.0.2'
-    prefixlen: 24
   R2:
     interfaces:
       R2-eth0: '10.0.0.3'
       R2-eth1: '10.0.0.4'
       R2-eth2: '10.0.0.5'
-    prefixlen: 24
   R3:
     interfaces:
       R3-eth0: '10.0.0.6'
-    prefixlen: 24
   R4:
     interfaces:
       R4-eth0: '10.0.0.7'
-    prefixlen: 24
   R5:
     interfaces:
       R5-eth0: '10.0.0.8'
-    prefixlen: 24

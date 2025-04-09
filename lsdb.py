@@ -1,16 +1,10 @@
 class LSDB:
     def __init__(self):
-        self.lsdb = {}
+        self.lsa_list = {}
 
-    def add(self, key, value):
-        """Add a key-value pair to the LSDB."""
-        self.lsdb[key] = value
+    def add(self, router_id, lsa):
+        self.lsa_list[router_id] = lsa
 
-    def get(self, key):
-        """Get a value by key from the LSDB."""
-        return self.lsdb.get(key, None)
+    def get(self, router_id):
+        return self.lsa_list.get(router_id, None)
 
-    def remove(self, key):
-        """Remove a key-value pair from the LSDB."""
-        if key in self.lsdb:
-            del self.lsdb[key]
