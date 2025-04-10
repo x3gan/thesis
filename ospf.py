@@ -21,8 +21,6 @@ MULTICAST_MAC = '01:00:5e:00:00:05'
 HELLO_INTERVAL = 10
 DEAD_INTERVAL = 40
 
-HELLO_PRIORITY = 1
-
 logging.basicConfig(level=logging.INFO)
 
 
@@ -105,10 +103,41 @@ class OSPF:
             links     = links
         )
 
-        self.lsdb.add(lsa_type, lsa)
+        self.lsdb.add(self.rid, lsa)
+        self.flood_lsa()
 
-    def send_lsa(self, intf):
-        pass
+    def flood_lsa(self, intf = None):
+        if intf is None:
+            for intf in self.interfaces:
+                self.flood_lsa(intf)
+            return
+
+        for neighbour in self.neighbour_states[intf]:
+            if neighbour.state == States.FULL:
+                lsa = self.lsdb.get(self.rid)
+                lsa_packet = (
+                    Ether(
+                        dst= neighbour.mac,
+                        src= self.interfaces[intf]['mac']
+                    ) /
+                    IP(
+                        dst= neighbour.ip,
+                        src= self.interfaces[intf]['ip'],
+                        proto= 89
+                    ) /
+                    OSPF_Hdr(
+                        version= 2,
+                        type= 4,
+                        src= self.rid,
+                        area= self.areaid
+                    ) /
+                    lsa
+                )
+
+                sendp(x= lsa_packet, iface= intf, verbose= False)
+                utils.write_pcap_file(pcap_file= f'{self.name}-{intf}', packet= lsa_packet)
+
+                logging.info(f'[{dt.now()}] {self.name} - {intf} LSU: {lsa.summary()}')
 
     def listen(self, intf):
         while True:
@@ -145,6 +174,11 @@ class OSPF:
 
             if header_type == 1:  # Hello csomag
                 self.process_hello(intf, packet)
+            if header_type == 4:
+                self.process_lsu(intf, packet)
+
+    def process_lsu(self, intf, packet):
+        pass
 
     def process_hello(self, intf, packet):
         if packet[OSPF_Hdr].src == self.rid:
@@ -210,6 +244,7 @@ class OSPF:
 
                     if neighbour.state == States.LOADING:
                         neighbour.state = States.FULL
+                        self.generate_router_lsa()
 
                         logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR FULL:'
                                      f' {neighbour.display()}')

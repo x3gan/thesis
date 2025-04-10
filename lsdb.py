@@ -8,3 +8,6 @@ class LSDB:
     def get(self, router_id):
         return self.lsa_list.get(router_id, None)
 
+    def get_all(self):
+        return self.lsa_list.values()
+
