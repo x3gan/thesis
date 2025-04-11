@@ -1,0 +1,10 @@
+{
+  'state' : {
+              'name'  : 'R1',
+              'links' : {
+                          'neighbour' : 'R2',
+                          'state' : States.INIT,
+                          'cost' : 1
+              },
+  }
+}

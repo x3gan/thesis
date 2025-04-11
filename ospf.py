@@ -5,10 +5,12 @@ import sys
 import threading
 from time import sleep
 
-from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA
+from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd, OSPF_LSA_Hdr, \
+    OSPF_Link
 from scapy.layers.inet import IP
 from scapy.layers.l2 import Ether
 from scapy.sendrecv import sendp, sniff
+from sympy.solvers.diophantine.diophantine import length
 
 import utils
 from lsdb import LSDB
@@ -88,22 +90,30 @@ class OSPF:
         for intf, neighbours in self.neighbour_states.items():
             for neighbour in neighbours:
                 if neighbour.state == States.FULL:
-                    link = {
-                        'type'  : 1,
-                        'id'    : neighbour.rid,
-                        'data'  : self.interfaces[intf]['ip'],
-                        'metric': 1
-                    }
+                    link = OSPF_Link(
+                        id     = neighbour.rid,
+                        data   = self.interfaces[intf]['ip'],
+                        type   = 1,
+                        metric = 1
+
+                    )
                     links.append(link)
 
-        lsa = OSPF_Router_LSA(
-            type      = lsa_type,
-            id        = self.rid,
-            advrouter = self.rid,
-            links     = links
+        lsa = (
+            OSPF_LSA_Hdr(
+                adrouter  = self.rid,
+                id = self.rid
+            ) /
+            OSPF_Router_LSA(
+                type      = lsa_type,
+                id        = self.rid,
+                adrouter  = self.rid,
+                linklist  = links
+            )
         )
 
-        self.lsdb.add(self.rid, lsa)
+
+        self.lsdb.add(lsa)
         self.flood_lsa()
 
     def flood_lsa(self, intf = None):
@@ -114,30 +124,34 @@ class OSPF:
 
         for neighbour in self.neighbour_states[intf]:
             if neighbour.state == States.FULL:
-                lsa = self.lsdb.get(self.rid)
+                lsa = self.lsdb.get(self.rid, self.rid) #is string
+
                 lsa_packet = (
-                    Ether(
-                        dst= neighbour.mac,
-                        src= self.interfaces[intf]['mac']
-                    ) /
-                    IP(
-                        dst= neighbour.ip,
-                        src= self.interfaces[intf]['ip'],
-                        proto= 89
-                    ) /
-                    OSPF_Hdr(
-                        version= 2,
-                        type= 4,
-                        src= self.rid,
-                        area= self.areaid
-                    ) /
-                    lsa
+                        Ether(
+                            dst=neighbour.mac,
+                            src=self.interfaces[intf]['mac']
+                        ) /
+                        IP(
+                            dst=neighbour.ip,
+                            src=self.interfaces[intf]['ip'],
+                            proto=89
+                        ) /
+                        OSPF_Hdr(
+                            version=2,
+                            type=4,
+                            src=self.rid,
+                            area=self.areaid
+                        ) /
+                        OSPF_LSUpd(
+                            lsalist=lsa
+                        )
                 )
 
-                sendp(x= lsa_packet, iface= intf, verbose= False)
                 utils.write_pcap_file(pcap_file= f'{self.name}-{intf}', packet= lsa_packet)
+                sendp(x= lsa_packet, iface= intf, verbose= False)
 
-                logging.info(f'[{dt.now()}] {self.name} - {intf} LSU: {lsa.summary()}')
+                logging.info(f'[{dt.now()}] {self.name} - {intf} LSUpdate')
+
 
     def listen(self, intf):
         while True:
@@ -178,7 +192,7 @@ class OSPF:
                 self.process_lsu(intf, packet)
 
     def process_lsu(self, intf, packet):
-        pass
+        print(packet.show())
 
     def process_hello(self, intf, packet):
         if packet[OSPF_Hdr].src == self.rid:

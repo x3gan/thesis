@@ -1,13 +1,21 @@
+from scapy.contrib.ospf import OSPF_LSA_Hdr
+
+
 class LSDB:
     def __init__(self):
         self.lsa_list = {}
 
-    def add(self, router_id, lsa):
-        self.lsa_list[router_id] = lsa
+    def add(self, lsa):
+        if not lsa.haslayer(OSPF_LSA_Hdr):
+            return
 
-    def get(self, router_id):
-        return self.lsa_list.get(router_id, None)
+        hdr = lsa.getlayer(OSPF_LSA_Hdr)
+        key = (hdr.adrouter, hdr.id)
+
+        self.lsa_list[key] = lsa
+
+    def get(self, adrouter, lsa_id):
+        return self.lsa_list.get((adrouter, lsa_id), None)
 
     def get_all(self):
-        return self.lsa_list.values()
-
+        return list(self.lsa_list.values())
