@@ -6,10 +6,12 @@ import sys
 import threading
 from time import sleep
 
+from lxml.html.defs import link_attrs
 from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd, OSPF_LSA_Hdr, \
     OSPF_Link
 from scapy.layers.inet import IP
 from scapy.layers.l2 import Ether
+from scapy.packet import Packet
 from scapy.sendrecv import sendp, sniff
 from sympy.solvers.diophantine.diophantine import length
 
@@ -21,7 +23,7 @@ from states import States
 MULTICAST_IP = '224.0.0.5'
 MULTICAST_MAC = '01:00:5e:00:00:05'
 
-TIMEOUT        = 5
+TIMEOUT        = 10
 DEAD_INTERVAL  = 40
 HELLO_INTERVAL = 10
 
@@ -30,6 +32,11 @@ logging.basicConfig(level=logging.INFO)
 
 class OSPF:
     def __init__(self, name, config_path):
+        """
+        OSPF router inicializálása.
+        :param name: A router neve, ahogy a halozatban szerepel
+        :param config_path: Az OSPF konfiguracio eleresi utja
+        """
         self.name = name
 
         ospf_config = utils.get_config(config_path)['ospf'][self.name]
@@ -47,7 +54,12 @@ class OSPF:
         self.last_lsa_update       = dt.now()
         self.is_simulation_done    = False
 
-    def send_hello(self, intf):
+    def send_hello(self, intf : str) -> None:
+        """
+        OSPF Hello csomag küldése multicast címen.
+        :param intf: Az az interfész, amelyik küldi a csomagot
+        :return:
+        """
         while True:
             if self.neighbour_states[intf]:
                 neighbour_list = [
@@ -59,131 +71,111 @@ class OSPF:
 
             hello_packet = (
                     Ether(
-                        dst=MULTICAST_MAC,
-                        src=self.interfaces[intf]['mac']
+                        dst = MULTICAST_MAC,
+                        src = self.interfaces[intf]['mac']
                     ) /
                     IP(
-                        dst=MULTICAST_IP,
-                        src=self.interfaces[intf]['ip'],
-                        proto=89
+                        dst   = MULTICAST_IP,
+                        src   = self.interfaces[intf]['ip'],
+                        proto = 89
                     ) /
                     OSPF_Hdr(
-                        version=2,
-                        type=1,
-                        src=self.rid,
-                        area=self.areaid
+                        version = 2,
+                        type    = 1,
+                        src     = self.rid,
+                        area    = self.areaid
 
                     ) /
                     OSPF_Hello(
-                        hellointerval=HELLO_INTERVAL,
-                        deadinterval=DEAD_INTERVAL,
-                        neighbors= neighbour_list,
+                        hellointerval = HELLO_INTERVAL,
+                        deadinterval  = DEAD_INTERVAL,
+                        neighbors     = neighbour_list
                     )
             )
 
             sendp(x= hello_packet, iface= intf, verbose= False)
-            utils.write_pcap_file(pcap_file= f'{self.name}-{intf}', packet= hello_packet)
+            utils.write_pcap_file(pcap_file= f'{intf}', packet= hello_packet)
 
-            #logging.info(f'[{dt.now()}] {self.name} - {intf} HELLO')
+            logging.info(f'[{dt.now()}] {self.name} - {intf} HELLO')
 
             sleep(HELLO_INTERVAL)
 
-    def generate_router_lsa(self):
-        """
-        Legeneraljuk az aktualis router LSA-jet, minden interfeszen, minden szomszeddal es ezt
-        beletesszuk a router LSDB-jebe.
-        :return:
-        """
-        lsa_type = 1
-
-        links = []
-        for intf, neighbours in self.neighbour_states.items():
-            for neighbour in neighbours:
-                if neighbour.state == States.FULL:
-                    #links
-                    pass
-
-        #lsa =
-
-        self.lsa_sequence_number += 1
-
-        #self.lsdb.add(lsa)
-        self.flood_lsa()
-
-    def flood_lsa(self, intf = None, exclude = None):
-        if intf is None:
-            for intf in self.interfaces:
-                if exclude and intf == exclude:
-                    continue
-
-                self.flood_lsa(intf)
+    def process_hello(self, intf : str, packet : Packet) -> None:
+        if packet[OSPF_Hdr].src == self.rid:
             return
 
+        with self.neighbour_states_lock:
+            neighbour_rid = packet[OSPF_Hdr].src
+            neighbour_ip  = packet[IP].src
+            neighbour_mac = packet[Ether].src
+
+            neighbour = self.get_neighbour(intf, neighbour_rid)
+
+            if neighbour is None:
+                neighbour = self.create_neighbour(neighbour_rid, neighbour_ip, neighbour_mac)
+                self.neighbour_states[intf].append(neighbour)
+
+                logging.info(f'[{dt.now()}] {self.name} - {intf} SZOMSZÉD INIT: {neighbour.rid}')
+
+            neighbour.last_seen = dt.now()
+
+            if self.rid in packet[OSPF_Hello].neighbors and neighbour.state == States.INIT:
+                neighbour.state = States.TWOWAY
+
+                logging.info(f'[{dt.now()}] {self.name} - {intf} SZOMSZÉD TWO-WAY: {neighbour.rid}')
+
+    def get_neighbour(self, intf : str, src : str) -> Neighbour | None:
         for neighbour in self.neighbour_states[intf]:
-            if neighbour.state == States.FULL:
-                #lsa = self.lsdb.get(self.rid) #is string
+            if neighbour.rid == src:
+                return neighbour
 
-                # if not isinstance(lsa, list):
-                #     lsa = [lsa]
+        return None
 
-                # lsa_packet = (
-                #         Ether(
-                #             dst=neighbour.mac,
-                #             src=self.interfaces[intf]['mac']
-                #         ) /
-                #         IP(
-                #             dst=neighbour.ip,
-                #             src=self.interfaces[intf]['ip'],
-                #             proto=89
-                #         ) /
-                #         OSPF_Hdr(
-                #             version=2,
-                #             type=4,
-                #             src=self.rid,
-                #             area=self.areaid
-                #         )
-                # )
+    @staticmethod
+    def create_neighbour(rid : str, ip : str, mac : str) -> Neighbour:
+        """
+        Szomszéd létrehozása az OSPF Hello csomag alapján.
+        :param rid: A szomszéd router ID-ja
+        :param ip: A szomszéd IP címe
+        :param mac: A szomszéd MAC címe
+        :return:
+        """
+        neighbour = Neighbour()
 
-                lsa = OSPF_LSA_Hdr() / OSPF_Router_LSA()
+        neighbour.build(
+            rid       = rid,
+            ip        = ip,
+            mac       = mac,
+            last_seen = dt.now(),
+            state     = States.INIT
+        )
 
-                lsu_packet = OSPF_LSUpd(lsalist = [lsa])
-                print(lsu_packet.show())
+        return neighbour
 
-                utils.write_pcap_file(pcap_file= f'{self.name}-{intf}', packet= lsu_packet)
-                sendp(x= lsu_packet, iface= intf, verbose= False)
-
-                logging.info(f'[{dt.now()}] {self.name} - {intf} LSUpdate')
-
-
-    def listen(self, intf):
+    def listen(self, intf : str) -> None:
+        """
+        Az adott interfész figyel, és ha kap egy csomagot, akkor azt belerakja a packet queue-ba.
+        :param intf: Az az interfész, amelyik figyeli a csomagokat
+        :return:
+        """
         while True:
             packets = sniff(iface= intf, count= 1)
 
             if packets:
                 packet = packets[0]
 
-                if packet.haslayer(OSPF_LSA_Hdr):
-                    print(packet.show())
-
                 if packet.haslayer(OSPF_Hdr):
                     self.packet_queue.put((intf, packet))
-                    utils.write_pcap_file(f'{self.name}-{intf}', packet)
+                    utils.write_pcap_file(f'{intf}', packet)
 
-                    #logging.info(f'[{dt.now()}] {self.name} - {intf} RECEIVED:
-                    # {packet[0].summary()}')
+                    logging.info(f'[{dt.now()}] {self.name} - {intf} CSOMAG ÉRKEZETT')
 
-    def is_down(self, intf):
-        while True:
-            with self.neighbour_states_lock:
-                for neighbour in list(self.neighbour_states[intf]):
-                    if neighbour.state == States.DOWN:
-                        self.neighbour_states[intf].remove(neighbour)
-
-                        logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR DOWN: {neighbour.display()}')
-
-            sleep(DEAD_INTERVAL)
-
-    def process_packet(self):
+    def process_packet(self) -> None:
+        """
+        A packet queue-bol sorra olvassuk ki a csomagokat és típustól függően tovább küldi
+        feldolgozásra őket.
+        :return:
+        """
         while True:
             try:
                 intf, packet = self.packet_queue.get(timeout=1)
@@ -198,72 +190,7 @@ class OSPF:
                 print(packet.show())
                 #self.process_lsu(packet)
 
-    def process_lsu(self, packet):
-        lsa_list = packet[OSPF_LSUpd].lsalist
-
-        for lsa in lsa_list:
-            self.process_lsa(lsa)
-
-    def process_lsa(self, lsa):
-        sender_rid = lsa[OSPF_Router_LSA].adrouter
-        sender = self.lsdb.get(sender_rid)
-
-        if sender is None:
-            self.lsdb.add(lsa)
-
-        sender = self.lsdb.get(sender_rid)
-
-        if sender.seq > self.lsdb.get(sender_rid).seq:
-            self.lsdb.add(lsa)
-            self.last_lsa_update = dt.now()
-
-            logging.info(f'[{dt.now()}] {self.name} - LSDB UPDATED: {lsa.summary()}')
-
-            #flood except to sender
-            self.flood_lsa(exclude= sender)
-
-    def process_hello(self, intf, packet):
-        if packet[OSPF_Hdr].src == self.rid:
-            return
-
-        with self.neighbour_states_lock:
-            neighbour = self.get_neighbour(intf, packet[OSPF_Hdr].src)
-
-            if neighbour is None:
-                neighbour = self.create_neighbour(intf, packet[OSPF_Hdr].src)
-                self.neighbour_states[intf].append(neighbour)
-
-                logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR INIT:'
-                             f' {neighbour.display()}')
-
-            neighbour.last_seen = dt.now()
-
-            if self.rid in packet[OSPF_Hello].neighbors and neighbour.state == States.INIT:
-                neighbour.state = States.TWOWAY
-
-                logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR TWO-WAY:'
-                             f' {neighbour.display()}')
-
-    def get_neighbour(self, intf, src):
-        for neighbour in self.neighbour_states[intf]:
-            if neighbour.rid == src:
-                return neighbour
-
-        return None
-
-    def create_neighbour(self, intf, src):
-        neighbour = Neighbour()
-        neighbour.build(
-            rid= src,
-            ip= self.interfaces[intf]['ip'],
-            mac= self.interfaces[intf]['mac'],
-            last_seen= dt.now(),
-            state= States.INIT
-        )
-
-        return neighbour
-
-    def state_watch(self, intf):
+    def state_watch(self, intf : str) -> None:
         """
         Interfeszenkent megnezzuk a szomszedok allapotat es frissitjuk azt.
         :param intf: Az aktualis router azon interfesze, amelyiket nezunk
@@ -296,8 +223,8 @@ class OSPF:
 
                     if neighbour.state == States.LOADING:
                         neighbour.state = States.FULL
-                        #self.generate_router_lsa()
-                        self.flood_lsa()
+                        self.generate_router_lsa()
+                        #self.flood_lsa()
 
                         #update display database
 
@@ -305,6 +232,116 @@ class OSPF:
                                      f' {neighbour.display()}')
 
             sleep(1)
+
+    def generate_router_lsa(self):
+        """
+        Legeneraljuk az aktualis router LSA-jet, minden interfeszen, minden szomszeddal es ezt
+        beletesszuk a router LSDB-jebe.
+        :return:
+        """
+        lsa_type = 1
+        link_type = 1
+
+        links = []
+        for intf, neighbours in self.neighbour_states.items():
+            for neighbour in neighbours:
+                if neighbour.state == States.FULL:
+                    link = OSPF_Link(
+                        type   = link_type,
+                        id     = neighbour.rid,
+                        data   = self.interfaces[intf]['ip'],
+                        metric = 1
+                    )
+                    links.append(link)
+
+        lsa = (
+                OSPF_LSA_Hdr(
+                    id  = self.rid,
+                    seq = self.lsa_sequence_number
+                ) /
+                OSPF_Router_LSA(
+                    linkcount = len(links),
+                    linklist  = links
+                )
+        )
+
+
+        self.lsa_sequence_number += 1
+        self.lsdb.add(lsa)
+        self.flood_lsa()
+
+    def flood_lsa(self, intf = None, exclude = None):
+        if intf is None:
+            for intf in self.interfaces:
+                self.flood_lsa(intf)
+            return
+
+        lsa_list = self.lsdb.get_all()
+
+        for neighbour in self.neighbour_states[intf]:
+            if neighbour.state == States.FULL:
+
+                lsu_packet = (
+                        Ether(
+                            dst = neighbour.mac,
+                            src = self.interfaces[intf]['mac']
+                        ) /
+                        IP(
+                            dst   = neighbour.ip,
+                            src   = self.interfaces[intf]['ip'],
+                            proto = 89
+                        ) /
+                        OSPF_Hdr(
+                            version = 2,
+                            type    = 4,
+                            src     = self.rid,
+                            area    = self.areaid
+                        ) / OSPF_LSUpd(
+                            lsalist = lsa_list
+                        )
+                )
+
+                sendp(x = lsu_packet, iface= intf, verbose= False)
+                utils.write_pcap_file(pcap_file= f'{intf}', packet= lsu_packet)
+
+                logging.info(f'[{dt.now()}] {self.name} - {intf} LSUPDATE')
+
+    def is_down(self, intf):
+        while True:
+            with self.neighbour_states_lock:
+                for neighbour in list(self.neighbour_states[intf]):
+                    if neighbour.state == States.DOWN:
+                        self.neighbour_states[intf].remove(neighbour)
+
+                        logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR DOWN: {neighbour.display()}')
+
+            sleep(DEAD_INTERVAL)
+
+    def process_lsu(self, packet):
+        lsa_list = packet[OSPF_LSUpd].lsalist
+
+        for lsa in lsa_list:
+            self.process_lsa(lsa)
+
+
+
+    def process_lsa(self, lsa):
+        sender_rid = lsa[OSPF_Router_LSA].adrouter
+        sender = self.lsdb.get(sender_rid)
+
+        if sender is None:
+            self.lsdb.add(lsa)
+
+        sender = self.lsdb.get(sender_rid)
+
+        if sender.seq > self.lsdb.get(sender_rid).seq:
+            self.lsdb.add(lsa)
+            self.last_lsa_update = dt.now()
+
+            logging.info(f'[{dt.now()}] {self.name} - LSDB UPDATED: {lsa.summary()}')
+
+            #flood except to sender
+            self.flood_lsa(exclude= sender)
 
     def check_timeout(self):
         if self.lsdb.get_all() and self.last_lsa_update + td(seconds=TIMEOUT) < dt.now():
@@ -324,13 +361,13 @@ if __name__ == '__main__':
     for interface in ospf.interfaces:
         hello_thread       = threading.Thread(target=ospf.send_hello, args=(interface,))
         listening_thread   = threading.Thread(target=ospf.listen, args=(interface,))
-        is_down_thread     = threading.Thread(target=ospf.is_down, args=(interface,))
+        #is_down_thread     = threading.Thread(target=ospf.is_down, args=(interface,))
         state_watch_thread = threading.Thread(target=ospf.state_watch, args=(interface,))
 
         threads.extend([
             hello_thread,
             listening_thread,
-            is_down_thread,
+            #is_down_thread,
             state_watch_thread
         ])
 
