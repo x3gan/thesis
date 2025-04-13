@@ -1,4 +1,5 @@
 from datetime import datetime as dt
+from datetime import timedelta as td
 import logging
 import queue
 import sys
@@ -20,8 +21,9 @@ from states import States
 MULTICAST_IP = '224.0.0.5'
 MULTICAST_MAC = '01:00:5e:00:00:05'
 
+TIMEOUT        = 5
+DEAD_INTERVAL  = 40
 HELLO_INTERVAL = 10
-DEAD_INTERVAL = 40
 
 logging.basicConfig(level=logging.INFO)
 
@@ -32,15 +34,18 @@ class OSPF:
 
         ospf_config = utils.get_config(config_path)['ospf'][self.name]
 
+        self.rid        = ospf_config['rid']
+        self.areaid     = ospf_config['areaid']
         self.interfaces = utils.get_device_interfaces_w_mac()
-        self.rid = ospf_config['rid']
-        self.areaid = ospf_config['areaid']
 
+        self.lsdb             = LSDB()
+        self.packet_queue     = queue.PriorityQueue()
         self.neighbour_states = {intf: [] for intf in self.interfaces}
-        self.lsdb = LSDB()
-        self.packet_queue = queue.PriorityQueue()
 
         self.neighbour_states_lock = threading.Lock()
+        self.lsa_sequence_number   = 0
+        self.last_lsa_update       = dt.now()
+        self.is_simulation_done    = False
 
     def send_hello(self, intf):
         while True:
@@ -79,76 +84,73 @@ class OSPF:
             sendp(x= hello_packet, iface= intf, verbose= False)
             utils.write_pcap_file(pcap_file= f'{self.name}-{intf}', packet= hello_packet)
 
-            logging.info(f'[{dt.now()}] {self.name} - {intf} HELLO')
+            #logging.info(f'[{dt.now()}] {self.name} - {intf} HELLO')
 
             sleep(HELLO_INTERVAL)
 
     def generate_router_lsa(self):
+        """
+        Legeneraljuk az aktualis router LSA-jet, minden interfeszen, minden szomszeddal es ezt
+        beletesszuk a router LSDB-jebe.
+        :return:
+        """
         lsa_type = 1
 
         links = []
         for intf, neighbours in self.neighbour_states.items():
             for neighbour in neighbours:
                 if neighbour.state == States.FULL:
-                    link = OSPF_Link(
-                        id     = neighbour.rid,
-                        data   = self.interfaces[intf]['ip'],
-                        type   = 1,
-                        metric = 1
+                    #links
+                    pass
 
-                    )
-                    links.append(link)
+        #lsa =
 
-        lsa = (
-            OSPF_LSA_Hdr(
-                adrouter  = self.rid,
-                id = self.rid
-            ) /
-            OSPF_Router_LSA(
-                type      = lsa_type,
-                id        = self.rid,
-                adrouter  = self.rid,
-                linklist  = links
-            )
-        )
+        self.lsa_sequence_number += 1
 
-
-        self.lsdb.add(lsa)
+        #self.lsdb.add(lsa)
         self.flood_lsa()
 
-    def flood_lsa(self, intf = None):
+    def flood_lsa(self, intf = None, exclude = None):
         if intf is None:
             for intf in self.interfaces:
+                if exclude and intf == exclude:
+                    continue
+
                 self.flood_lsa(intf)
             return
 
         for neighbour in self.neighbour_states[intf]:
             if neighbour.state == States.FULL:
-                lsa = self.lsdb.get(self.rid, self.rid) #is string
+                #lsa = self.lsdb.get(self.rid) #is string
 
-                lsa_packet = (
-                        Ether(
-                            dst=neighbour.mac,
-                            src=self.interfaces[intf]['mac']
-                        ) /
-                        IP(
-                            dst=neighbour.ip,
-                            src=self.interfaces[intf]['ip'],
-                            proto=89
-                        ) /
-                        OSPF_Hdr(
-                            version=2,
-                            type=4,
-                            src=self.rid,
-                            area=self.areaid
-                        ) /
-                        OSPF_LSUpd(
-                            lsalist=lsa
-                        )
-                )
+                # if not isinstance(lsa, list):
+                #     lsa = [lsa]
 
-                utils.write_pcap_file(pcap_file= f'{self.name}-{intf}', packet= lsa_packet)
-                sendp(x= lsa_packet, iface= intf, verbose= False)
+                # lsa_packet = (
+                #         Ether(
+                #             dst=neighbour.mac,
+                #             src=self.interfaces[intf]['mac']
+                #         ) /
+                #         IP(
+                #             dst=neighbour.ip,
+                #             src=self.interfaces[intf]['ip'],
+                #             proto=89
+                #         ) /
+                #         OSPF_Hdr(
+                #             version=2,
+                #             type=4,
+                #             src=self.rid,
+                #             area=self.areaid
+                #         )
+                # )
+
+                lsa = OSPF_LSA_Hdr() / OSPF_Router_LSA()
+
+                lsu_packet = OSPF_LSUpd(lsalist = [lsa])
+                print(lsu_packet.show())
+
+                utils.write_pcap_file(pcap_file= f'{self.name}-{intf}', packet= lsu_packet)
+                sendp(x= lsu_packet, iface= intf, verbose= False)
 
                 logging.info(f'[{dt.now()}] {self.name} - {intf} LSUpdate')
 
@@ -160,11 +162,15 @@ class OSPF:
             if packets:
                 packet = packets[0]
 
+                if packet.haslayer(OSPF_LSA_Hdr):
+                    print(packet.show())
+
                 if packet.haslayer(OSPF_Hdr):
                     self.packet_queue.put((intf, packet))
                     utils.write_pcap_file(f'{self.name}-{intf}', packet)
 
-                    logging.info(f'[{dt.now()}] {self.name} - {intf} RECEIVED: {packet[0].summary()}')
+                    #logging.info(f'[{dt.now()}] {self.name} - {intf} RECEIVED:
+                    # {packet[0].summary()}')
 
     def is_down(self, intf):
         while True:
@@ -188,11 +194,33 @@ class OSPF:
 
             if header_type == 1:  # Hello csomag
                 self.process_hello(intf, packet)
-            if header_type == 4:
-                self.process_lsu(intf, packet)
+            if header_type == 4: # LSUpdate csomag
+                print(packet.show())
+                #self.process_lsu(packet)
 
-    def process_lsu(self, intf, packet):
-        print(packet.show())
+    def process_lsu(self, packet):
+        lsa_list = packet[OSPF_LSUpd].lsalist
+
+        for lsa in lsa_list:
+            self.process_lsa(lsa)
+
+    def process_lsa(self, lsa):
+        sender_rid = lsa[OSPF_Router_LSA].adrouter
+        sender = self.lsdb.get(sender_rid)
+
+        if sender is None:
+            self.lsdb.add(lsa)
+
+        sender = self.lsdb.get(sender_rid)
+
+        if sender.seq > self.lsdb.get(sender_rid).seq:
+            self.lsdb.add(lsa)
+            self.last_lsa_update = dt.now()
+
+            logging.info(f'[{dt.now()}] {self.name} - LSDB UPDATED: {lsa.summary()}')
+
+            #flood except to sender
+            self.flood_lsa(exclude= sender)
 
     def process_hello(self, intf, packet):
         if packet[OSPF_Hdr].src == self.rid:
@@ -236,34 +264,51 @@ class OSPF:
         return neighbour
 
     def state_watch(self, intf):
+        """
+        Interfeszenkent megnezzuk a szomszedok allapotat es frissitjuk azt.
+        :param intf: Az aktualis router azon interfesze, amelyiket nezunk
+        :return:
+        """
         while True:
+            self.check_timeout()
+
             with self.neighbour_states_lock:
                 for neighbour in list(self.neighbour_states[intf]):
                     if neighbour.state == States.TWOWAY:
                         neighbour.state = States.EXSTART
+                        #update display database
 
                         logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR EX-START:'
                                      f' {neighbour.display()}')
                     if neighbour.state == States.EXSTART:
                         neighbour.state = States.EXCHANGE
+                        #update display database
 
                         logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR EXCHANGE:'
                                      f' {neighbour.display()}')
 
                     if neighbour.state == States.EXCHANGE:
                         neighbour.state = States.LOADING
+                        #update display database
 
                         logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR LOADING:'
                                      f' {neighbour.display()}')
 
                     if neighbour.state == States.LOADING:
                         neighbour.state = States.FULL
-                        self.generate_router_lsa()
+                        #self.generate_router_lsa()
+                        self.flood_lsa()
+
+                        #update display database
 
                         logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR FULL:'
                                      f' {neighbour.display()}')
 
             sleep(1)
+
+    def check_timeout(self):
+        if self.lsdb.get_all() and self.last_lsa_update + td(seconds=TIMEOUT) < dt.now():
+            self.is_simulation_done = True
 
 
 if __name__ == '__main__':
@@ -292,5 +337,22 @@ if __name__ == '__main__':
     process_thread = threading.Thread(target=ospf.process_packet)
     threads.append(process_thread)
 
-    for thread in threads:
-        thread.start()
+    try:
+        for thread in threads:
+            thread.start()
+
+
+        while not ospf.is_simulation_done:
+            sleep(1)
+
+        if ospf.is_simulation_done:
+            #log into tmp/router_name DONE
+            #ospf.stop()
+            pass
+
+
+    except KeyboardInterrupt:
+        print("\nLeállítás kérés érkezett...")
+    finally:
+        print("Szálak leállítása...")
+        print("Program vége.")

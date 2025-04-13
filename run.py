@@ -39,4 +39,6 @@ if __name__ == '__main__':
             router.cmd(f'sudo python3 ospf.py {router.name} &')
 
     CLI(network)
+
+
     network.stop()
