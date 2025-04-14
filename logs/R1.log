@@ -1,0 +1,59 @@
+[2025-04-14 22:03:43] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:03:43] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:03:53] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:03:53] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:17:42] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:17:42] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:17:52] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:17:52] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:21:51] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:21:51] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:21:51] Csomag erkezett R1-eth0: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 22:22:01] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:22:01] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:48:48] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:48:48] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:48:49] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 22:48:58] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:48:58] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:48:59] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 22:49:08] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:49:08] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:49:09] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 22:49:18] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:49:18] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:49:19] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 22:49:28] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:49:28] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:49:29] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 22:49:38] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:49:38] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:49:39] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 22:49:48] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:49:48] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:49:50] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 22:49:58] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:49:58] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:57:02] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:57:02] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:57:03] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 22:57:12] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 22:57:12] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 22:57:13] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 23:07:03] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 23:07:03] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 23:07:05] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 23:07:05] R1-eth0 INIT: 2.2.2.2
+[2025-04-14 23:07:13] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 23:07:13] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 23:07:15] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 23:07:15] R1-eth0 TWO-WAY: 2.2.2.2
+[2025-04-14 23:07:16] R1-eth0 EXSTART: 2.2.2.2
+[2025-04-14 23:07:16] R1-eth0 EXCHANGE: 2.2.2.2
+[2025-04-14 23:07:16] R1-eth0 LOADING: 2.2.2.2
+[2025-04-14 23:07:16] R1-eth0 FULL: 2.2.2.2
+[2025-04-14 23:07:23] Hello csomag kuldve R1-eth0 interfeszen
+[2025-04-14 23:07:23] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 23:07:25] Csomag erkezett R1-eth0 interfeszen: Ether / 10.0.0.3 > 224.0.0.5 ospf / OSPF_Hdr / OSPF_Hello
+[2025-04-14 23:07:33] Hello csomag kuldve R1-eth1 interfeszen
+[2025-04-14 23:07:33] Hello csomag kuldve R1-eth0 interfeszen

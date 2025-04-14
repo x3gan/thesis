@@ -7,24 +7,26 @@ from scapy.utils import PcapWriter
 from yaml import safe_load
 
 def cleanup():
-    logs_folder = os.listdir('logs/')
+    folders = ['packet_logs', 'logs']
 
-    if not logs_folder:
+    if not os.path.exists('packet_logs') or not os.path.exists('logs'):
         return
 
-    for log in logs_folder:
-        try:
-            if log.endswith('.pcap'):
-                os.remove(f'logs/{log}')
-        except FileNotFoundError:
-            continue
+    for folder in folders:
+        log_folder = os.listdir(folder)
+
+        for log in log_folder:
+            try:
+                os.remove(f'{log_folder}/{log}')
+            except FileNotFoundError:
+                continue
 
 
 def write_pcap_file(pcap_file, packet):
     """
     A kuldott/elfogott csomagok kiirasa a pcap fileba
     """
-    file_path = f'logs/{pcap_file}.pcap'
+    file_path = f'packet_logs/{pcap_file}.pcap'
 
     pcap_writer = PcapWriter(file_path, append= True, sync= True)
     pcap_writer.write(packet)

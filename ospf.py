@@ -29,6 +29,19 @@ HELLO_INTERVAL = 10
 
 logging.basicConfig(level=logging.INFO)
 
+def setup_logger(name):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    log_path = f'logs/{name}.log'
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setFormatter(logging.Formatter(
+        '[%(asctime)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    ))
+
+    logger.addHandler(file_handler)
+    return logger
 
 class OSPF:
     def __init__(self, name, config_path):
@@ -53,6 +66,9 @@ class OSPF:
         self.lsa_sequence_number   = 0
         self.last_lsa_update       = dt.now()
         self.is_simulation_done    = False
+
+        # Csinal egy logger-t, ami a router nevét tartalmazza
+        self.logger = setup_logger(self.name)
 
     def send_hello(self, intf : str) -> None:
         """
@@ -95,6 +111,7 @@ class OSPF:
 
             sendp(x= hello_packet, iface= intf, verbose= False)
             utils.write_pcap_file(pcap_file= f'{intf}', packet= hello_packet)
+            self.logger.info(f"Hello csomag kuldve {intf} interfeszen")
 
             logging.info(f'[{dt.now()}] {self.name} - {intf} HELLO')
 
@@ -116,6 +133,7 @@ class OSPF:
                 self.neighbour_states[intf].append(neighbour)
 
                 logging.info(f'[{dt.now()}] {self.name} - {intf} SZOMSZÉD INIT: {neighbour.rid}')
+                self.logger.info(f'{intf} INIT: {neighbour.rid}')
 
             neighbour.last_seen = dt.now()
 
@@ -123,6 +141,7 @@ class OSPF:
                 neighbour.state = States.TWOWAY
 
                 logging.info(f'[{dt.now()}] {self.name} - {intf} SZOMSZÉD TWO-WAY: {neighbour.rid}')
+                self.logger.info(f'{intf} TWO-WAY: {neighbour.rid}')
 
     def get_neighbour(self, intf : str, src : str) -> Neighbour | None:
         for neighbour in self.neighbour_states[intf]:
@@ -182,6 +201,9 @@ class OSPF:
             except queue.Empty:
                 continue
 
+            if self.rid != packet[OSPF_Hdr].src:
+                self.logger.info(f"Csomag erkezett {intf} interfeszen: {packet.summary()}")
+
             header_type = packet[OSPF_Hdr].type
 
             if header_type == 1:  # Hello csomag
@@ -205,31 +227,30 @@ class OSPF:
                         neighbour.state = States.EXSTART
                         #update display database
 
-                        logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR EX-START:'
-                                     f' {neighbour.display()}')
+                        logging.info(f'[{dt.now()}] {intf} NEIGHBOUR EXSTART: {neighbour.rid}')
+                        self.logger.info(f"{intf} EXSTART: {neighbour.rid}")
+
                     if neighbour.state == States.EXSTART:
                         neighbour.state = States.EXCHANGE
                         #update display database
 
-                        logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR EXCHANGE:'
-                                     f' {neighbour.display()}')
+                        logging.info(f'[{dt.now()}] {intf} NEIGHBOUR EXCHANGE: {neighbour.rid}')
+                        self.logger.info(f"{intf} EXCHANGE: {neighbour.rid}")
 
                     if neighbour.state == States.EXCHANGE:
                         neighbour.state = States.LOADING
                         #update display database
 
-                        logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR LOADING:'
-                                     f' {neighbour.display()}')
+                        logging.info(f'[{dt.now()}] {intf} NEIGHBOUR LOADING: {neighbour.rid}')
+                        self.logger.info(f"{intf} LOADING: {neighbour.rid}")
 
                     if neighbour.state == States.LOADING:
                         neighbour.state = States.FULL
-                        self.generate_router_lsa()
+                        #self.generate_router_lsa()
                         #self.flood_lsa()
 
-                        #update display database
-
-                        logging.info(f'[{dt.now()}] {self.name} - {intf} NEIGHBOUR FULL:'
-                                     f' {neighbour.display()}')
+                        logging.info(f'[{dt.now()}] {intf} NEIGHBOUR FULL: {neighbour.rid}')
+                        self.logger.info(f"{intf} FULL: {neighbour.rid}")
 
             sleep(1)
 
