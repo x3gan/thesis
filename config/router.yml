@@ -1,19 +1,45 @@
-router:
+routers:
   R1:
+    rid: 1.1.1.1
+    area: 0.0.0.0
     interfaces:
-      R1-eth0 : '10.0.0.1'
-      R1-eth1 : '10.0.0.2'
+      - name: eth0
+        ip: 10.0.0.1
+        neighbours: [R2]
+      - name: eth1
+        ip: 10.0.0.2
+        neighbours: [R3]
   R2:
+    rid: 2.2.2.2
+    area: 0.0.0.0
     interfaces:
-      R2-eth0: '10.0.0.3'
-      R2-eth1: '10.0.0.4'
-      R2-eth2: '10.0.0.5'
+      - name: eth0
+        ip: 10.0.0.3
+        neighbours: [R1]
+      - name: eth1
+        ip: 10.0.0.4
+        neighbours: [R4]
+      - name: eth2
+        ip: 10.0.0.5
+        neighbours: [R5]
   R3:
+    rid: 3.3.3.3
+    area: 0.0.0.0
     interfaces:
-      R3-eth0: '10.0.0.6'
+      - name: eth0
+        ip: 10.0.0.6
+        neighbours: [R1]
   R4:
+    rid: 4.4.4.4
+    area: 0.0.0.0
     interfaces:
-      R4-eth0: '10.0.0.7'
+      - name: eth0
+        ip: 10.0.0.7
+        neighbours: [R2]
   R5:
+    rid: 5.5.5.5
+    area: 0.0.0.0
     interfaces:
-      R5-eth0: '10.0.0.8'
+      - name: eth0
+        ip: 10.0.0.8
+        neighbours: [R2]

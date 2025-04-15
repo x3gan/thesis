@@ -7,30 +7,43 @@ from log_monitor import LogMonitor
 from topology import Topology
 from utils import get_config
 
-def configure_router_interfaces(net, config):
-    for router in net.hosts:
-        for interface, ip in config['router'][router.name]['interfaces'].items():
-            router.setIP(ip, intf= interface)
+CONFIG_PATH = 'config/router.yml'
+
+class NetworkManager:
+    def __init__(self) -> None:
+        self.config      = get_config(CONFIG_PATH)
+        self.network     = Mininet(topo= Topology(self.config))
+        self.log_monitor = LogMonitor()
+
+    def run(self, mode : str = 'manual') -> None:
+        try:
+            self.network.start()
+            self.configure_interfaces()
+
+            if mode == 'auto':
+                self.start_ospf()
+
+            self.log_monitor.start()
+
+            CLI(self.network)
+        finally:
+            self.log_monitor.stop()
+            self.network.stop()
+
+    def start_ospf(self) -> None:
+        for router in self.network.hosts:
+            router.cmd("sudo python3 ospf.py {router.name} &")
+
+    def configure_interfaces(self) -> None:
+        for router in self.network.hosts:
+            if router.name in self.config['routers']:
+                for interface in self.config['routers'][router.name]['interfaces']:
+                    interface_name = f"{router.name}-{interface['name']}"
+
+                    router.setIP(interface['ip'], intf= interface_name)
 
 if __name__ == '__main__':
     mode = sys.argv[1] # man auto test
 
-    router_config   = get_config('config/router.yml')
-    topology_config = get_config('config/topology.yml')
-
-    network = Mininet(topo= Topology(router_config, topology_config))
-
-    log_monitor = LogMonitor()
-
-    try:
-        network.start()
-
-        configure_router_interfaces(network, router_config)
-
-        log_monitor.start()
-
-        CLI(network)
-
-    finally:
-        log_monitor.stop()
-        network.stop()
+    network_manager = NetworkManager()
+    network_manager.run(mode)

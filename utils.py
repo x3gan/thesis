@@ -6,20 +6,7 @@ import struct
 from scapy.utils import PcapWriter
 from yaml import safe_load
 
-def cleanup():
-    folders = ['packet_logs', 'logs']
 
-    if not os.path.exists('packet_logs') or not os.path.exists('logs'):
-        return
-
-    for folder in folders:
-        log_folder = os.listdir(folder)
-
-        for log in log_folder:
-            try:
-                os.remove(f'{log_folder}/{log}')
-            except FileNotFoundError:
-                continue
 
 
 def write_pcap_file(pcap_file, packet):
