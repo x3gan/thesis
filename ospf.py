@@ -6,6 +6,7 @@ import logging
 import queue
 import sys
 import threading
+from pathlib import Path
 from time import sleep
 from typing import Any
 
@@ -51,7 +52,28 @@ def setup_logger(name : str) -> logging.Logger:
 
 
 def cleanup() -> None:
-    pass
+    """
+    Törli a log és packet_logs mappák tartalmát, kivéve az ignore listán lévő fájlokat
+    :return
+    """
+    log_folders = ['logs', 'packet_logs']
+    ignored_files = {'README.md', '__init__.py', '.gitkeep'}
+
+    for folder in log_folders:
+        try:
+            folder_path = Path(folder)
+
+            folder_path = Path(folder)
+            folder_path.mkdir(exist_ok=True)
+
+            for item in folder_path.iterdir():
+                if item.is_file() and item.name not in ignored_files:
+                    try:
+                        item.unlink()
+                    except (PermissionError, FileNotFoundError):
+                        logging.error(f"Nem lehetett törölni a fájlt: {item}")
+        except FileNotFoundError:
+            logging.error(f"A mappa nem található: {folder}")
 
 
 def get_config(filepath):
