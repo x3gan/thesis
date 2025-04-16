@@ -1,5 +1,5 @@
 import os
-from abc import ABC, abstractmethod
+
 from datetime import datetime as dt
 from datetime import timedelta as td
 import logging
@@ -8,17 +8,13 @@ import sys
 import threading
 from pathlib import Path
 from time import sleep
-from typing import Any
 
-from lxml.html.defs import link_attrs
-from reportlab.graphics.renderPS import PSCanvas
-from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd, OSPF_LSA_Hdr, \
-    OSPF_Link
+from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd, OSPF_Link
 from scapy.layers.inet import IP
 from scapy.layers.l2 import Ether
 from scapy.packet import Packet
 from scapy.sendrecv import sendp, sniff
-from sympy.solvers.diophantine.diophantine import length
+
 from yaml import safe_load
 
 import utils
@@ -83,16 +79,6 @@ def get_config(filepath):
     return config
 
 
-def get_interface_names(interfaces : list) -> list:
-    interface_names = []
-
-    for interface in interfaces:
-        interface_name = interface['name']
-        interface_names.append(interface_name)
-
-    return interface_names
-
-
 def get_interface_mac(name):
     mac = os.popen(f"cat /sys/class/net/{name}/address").read().strip()
     return mac
@@ -110,6 +96,7 @@ def get_device_interfaces_w_mac(router_name : str, interfaces : list) -> dict:
         }
 
     return interface_info
+
 
 class OSPF:
     def __init__(self, name : str, config_path : str, interface : Interface) -> None:
@@ -139,7 +126,6 @@ class OSPF:
         self.logger            = setup_logger(self.router_name)
         self.network_interface = interface
 
-
     def _send_hello(self, intf : str) -> None:
         """
         OSPF Hello csomag küldése multicast címen.
@@ -152,8 +138,7 @@ class OSPF:
             self.network_interface.send(packet= hello_packet, interface= intf)
             utils.write_pcap_file(pcap_file= f'{intf}', packet= hello_packet)
 
-            self.logger.info(f"Hello csomag küldve {intf} interfészen")
-            logging.info(f"[{dt.now()}] Hello csomag küldve {intf} interfészen")
+            self.logger.info(f" Hello csomag küldve {intf} interfészen")
 
             sleep(HELLO_INTERVAL)
 
@@ -207,16 +192,14 @@ class OSPF:
                 neighbour = self.create_neighbour(neighbour_rid, neighbour_ip, neighbour_mac)
                 self.neighbour_states[intf].append(neighbour)
 
-                logging.info(f"[{dt.now()}] {intf} szomszéd INIT: {neighbour.rid}")
-                self.logger.info(f"{intf} szomszéd INIT: {neighbour.rid}")
+                self.logger.info(f" {intf} szomszéd INIT: {neighbour.rid}")
 
             neighbour.last_seen = dt.now()
 
             if self.rid in packet[OSPF_Hello].neighbors and neighbour.state == States.INIT:
                 neighbour.state = States.TWOWAY
 
-                logging.info(f"[{dt.now()}] {intf} szomszéd 2-WAY: {neighbour.rid}")
-                self.logger.info(f"{intf} szomszéd 2-WAY: {neighbour.rid}")
+                self.logger.info(f" {intf} szomszéd 2-WAY: {neighbour.rid}")
 
     def get_neighbour(self, intf : str, src : str) -> Neighbour | None:
         for neighbour in self.neighbour_states[intf]:
@@ -259,7 +242,6 @@ class OSPF:
                 self.packet_queue.put((intf, packet))
                 utils.write_pcap_file(f'{intf}', packet)
 
-
     def _process_packet(self) -> None:
         """
         A packet queue-bol sorra olvassuk ki a csomagokat és típustól függően tovább küldi
@@ -273,16 +255,14 @@ class OSPF:
                 continue
 
             if self.rid != packet[OSPF_Hdr].src:
-                logging.info(f"[{dt.now()}] Csomag érkezett a(z) {intf} interfészen: {packet.summary()}")
-                self.logger.info(f"Csomag érkezett a(z) {intf} interfészen: {packet.summary()}")
+                self.logger.info(f" Csomag érkezett a(z) {intf} interfészen: {packet.summary()}")
 
             header_type = packet[OSPF_Hdr].type
 
             if header_type == 1:  # Hello csomag
                 self._process_hello(intf, packet)
             if header_type == 4: # LSUpdate csomag
-                print(packet.show())
-                #self.process_lsu(packet)
+                self._process_lsu(packet)
 
     def _state_watch(self, intf : str) -> None:
         """
@@ -296,40 +276,39 @@ class OSPF:
             with self.neighbour_states_lock:
                 for neighbour in list(self.neighbour_states[intf]):
                     if neighbour.state == States.TWOWAY:
+                        sleep(1)
                         neighbour.state = States.EXSTART
 
-                        logging.info(f"[{dt.now()}] {intf} szomszéd EXSTART: {neighbour.rid}")
-                        self.logger.info(f"{intf} szomszéd EXSTART: {neighbour.rid}")
+                        self.logger.info(f" {intf} szomszéd EXSTART: {neighbour.rid}")
 
                     if neighbour.state == States.EXSTART:
+                        sleep(1)
                         neighbour.state = States.EXCHANGE
 
-                        logging.info(f"[{dt.now()}] {intf} szomszéd EXCHANGE: {neighbour.rid}")
-                        self.logger.info(f"{intf} szomszéd EXCHANGE: {neighbour.rid}")
+                        self.logger.info(f" {intf} szomszéd EXCHANGE: {neighbour.rid}")
 
                     if neighbour.state == States.EXCHANGE:
+                        sleep(1)
                         neighbour.state = States.LOADING
 
-                        logging.info(f"[{dt.now()}] {intf} szomszéd LOADING: {neighbour.rid}")
-                        self.logger.info(f"{intf} szomszéd LOADING: {neighbour.rid}")
+                        self.logger.info(f" {intf} szomszéd LOADING: {neighbour.rid}")
 
                     if neighbour.state == States.LOADING:
+                        sleep(1)
                         neighbour.state = States.FULL
-                        #self.generate_router_lsa()
-                        #self.flood_lsa()
+                        self._generate_router_lsa()
+                        self._flood_lsa()
 
-                        logging.info(f"[{dt.now()}] {intf} szomszéd FULL: {neighbour.rid}")
-                        self.logger.info(f"{intf} szomszéd FULL: {neighbour.rid}")
+                        self.logger.info(f" {intf} szomszéd FULL: {neighbour.rid}")
 
             sleep(1)
 
-    def generate_router_lsa(self):
+    def _generate_router_lsa(self) -> None:
         """
         Legeneraljuk az aktualis router LSA-jet, minden interfeszen, minden szomszeddal es ezt
         beletesszuk a router LSDB-jebe.
         :return:
         """
-        lsa_type = 1
         link_type = 1
 
         links = []
@@ -344,32 +323,32 @@ class OSPF:
                     )
                     links.append(link)
 
-        lsa = (
-                OSPF_LSA_Hdr(
-                    id  = self.rid,
-                    seq = self.lsa_sequence_number
-                ) /
-                OSPF_Router_LSA(
-                    linkcount = len(links),
-                    linklist  = links
-                )
+        lsa = OSPF_Router_LSA(
+                id        = self.rid,
+                adrouter  = self.rid,
+                seq       = self.lsa_sequence_number,
+                linkcount = len(links),
+                linklist  = links
         )
-
 
         self.lsa_sequence_number += 1
         self.lsdb.add(lsa)
-        self.flood_lsa()
 
-    def flood_lsa(self, intf = None, exclude = None):
+        print(self.lsdb.get_all())
+
+    def _flood_lsa(self, intf = None, exclude_rid = None) -> None:
+        if not self.lsdb.get(self.rid, 1):
+            self._generate_router_lsa()
+
         if intf is None:
             for intf in self.interfaces:
-                self.flood_lsa(intf)
+                self._flood_lsa(intf)
             return
 
         lsa_list = self.lsdb.get_all()
 
         for neighbour in self.neighbour_states[intf]:
-            if neighbour.state == States.FULL:
+            if neighbour.state == States.FULL and neighbour.rid != exclude_rid:
 
                 lsu_packet = (
                         Ether(
@@ -394,7 +373,7 @@ class OSPF:
                 sendp(x = lsu_packet, iface= intf, verbose= False)
                 utils.write_pcap_file(pcap_file= f'{intf}', packet= lsu_packet)
 
-                logging.info(f'[{dt.now()}] {self.name} - {intf} LSUPDATE')
+                self.logger.info(f" LSUpdate csomag küldve {intf} interfészen")
 
     def is_down(self, intf):
         while True:
@@ -407,29 +386,35 @@ class OSPF:
 
             sleep(DEAD_INTERVAL)
 
-    def process_lsu(self, packet):
+    def _process_lsu(self, packet : Packet) -> None:
         lsa_list = packet[OSPF_LSUpd].lsalist
 
         for lsa in lsa_list:
-            self.process_lsa(lsa)
+            self._process_lsa(lsa)
 
-    def process_lsa(self, lsa):
+    def _process_lsa(self, lsa : Packet) -> None:
         sender_rid = lsa[OSPF_Router_LSA].adrouter
-        sender = self.lsdb.get(sender_rid)
+        lsa_type   = lsa[OSPF_Router_LSA].type
 
-        if sender is None:
+        existing_lsa = self.lsdb.get(sender_rid, lsa_type)
+
+        if existing_lsa is None:
             self.lsdb.add(lsa)
 
-        sender = self.lsdb.get(sender_rid)
+            self.logger.info(f" {self.router_name} LSDB-be került: {lsa.summary()}")
 
-        if sender.seq > self.lsdb.get(sender_rid).seq:
+            print(self.lsdb.get_all())
+
+            existing_lsa = self.lsdb.get(sender_rid, lsa_type)
+
+        if lsa.seq > existing_lsa.seq:
             self.lsdb.add(lsa)
+            print(self.lsdb.get_all())
             self.last_lsa_update = dt.now()
 
-            logging.info(f'[{dt.now()}] {self.name} - LSDB UPDATED: {lsa.summary()}')
+            self.logger.info(f" {self.router_name} LSDB frissítve: {lsa.summary()}")
 
-            #flood except to sender
-            self.flood_lsa(exclude= sender)
+            self._flood_lsa(exclude_rid= sender_rid)
 
     def check_timeout(self) -> None:
         if self.lsdb.get_all() and self.last_lsa_update + td(seconds=TIMEOUT) < dt.now():
@@ -448,7 +433,7 @@ class OSPF:
                 hello_thread,
                 listening_thread,
                 # is_down_thread,
-                #state_watch_thread
+                state_watch_thread
             ])
 
         process_thread = threading.Thread(target=self._process_packet)
@@ -456,7 +441,6 @@ class OSPF:
 
         for thread in threads:
             thread.start()
-            #pass
 
 if __name__ == '__main__':
     path = 'config/router.yml'
