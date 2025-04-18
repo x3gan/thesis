@@ -10,6 +10,7 @@ from utils import get_config
 CONFIG_PATH = 'config/router.yml'
 
 class NetworkManager:
+
     def __init__(self) -> None:
         self.config      = get_config(CONFIG_PATH)
         self.network     = Mininet(topo= Topology(self.config))

@@ -5,7 +5,7 @@ from scapy.packet import Packet
 
 
 class LSDB:
-    def __init__(self):
+    def __init__(self) -> None:
         self.lsa_db : dict[int, dict[str, Packet]] = {}
 
     def add(self, lsa: Packet) -> None:

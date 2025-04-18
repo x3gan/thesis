@@ -5,7 +5,7 @@ from scapy.packet import Packet
 
 class AbstractInterface(ABC):
     @abstractmethod
-    def send(self, packet, interface : str) -> None:
+    def send(self, packet : Packet, interface : str) -> None:
         """
         Csomag küldése az adott interfészen
         :param packet: A küldendő csomag

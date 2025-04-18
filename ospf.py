@@ -2,6 +2,8 @@ import os
 
 from datetime import datetime as dt
 from datetime import timedelta as td
+from typing import Any
+
 import networkx as nx
 import logging
 import queue
@@ -10,6 +12,7 @@ import threading
 from pathlib import Path
 from time import sleep
 
+from networkx.drawing.nx_agraph import to_agraph
 from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd, OSPF_Link
 from scapy.layers.inet import IP
 from scapy.layers.l2 import Ether
@@ -101,6 +104,7 @@ def get_device_interfaces_w_mac(router_name : str, interfaces : list) -> dict:
 
 
 class OSPF:
+
     def __init__(self, name : str, config_path : str, interface : Interface) -> None:
         """
         OSPF router inicializálása.
@@ -146,7 +150,7 @@ class OSPF:
 
             sleep(HELLO_INTERVAL)
 
-    def _create_hello_packet(self, intf):
+    def _create_hello_packet(self, intf: str) -> Packet:
         if self.neighbour_states[intf]:
             neighbour_list = [
                 neighbour.rid for neighbour in self.neighbour_states[intf]
@@ -379,7 +383,7 @@ class OSPF:
 
                 self.logger.info(f" LSUpdate csomag küldve {intf} interfészen")
 
-    def _is_down(self, intf):
+    def _is_down(self, intf: str) -> None:
         while True:
             with self.neighbour_states_lock:
                 for neighbour in list(self.neighbour_states[intf]):
@@ -401,6 +405,7 @@ class OSPF:
 
         if lsa_updated:
             self._run_spf()
+            self._show_topology()
             self._flood_lsa(exclude_rid= packet[OSPF_Hdr].src)
 
     def _process_lsa(self, lsa : Packet) -> bool:
@@ -450,7 +455,8 @@ class OSPF:
 
     def _run_spf(self) -> None:
         """
-        TODO
+        Meghívja a NetworkX Python könyvtárat és annak segítségével kiszámolja a legrövidebb utat minden Router szempontjából.
+        (Támogatja az egyforma költségű utakkal való számolást is)
         :return:
         """
         self._build_topology()
@@ -487,6 +493,10 @@ class OSPF:
         except nx.NetworkXNoPath:
             logging.error(f"Nincs elérhető útvonal a(z) {self.router_name} egyetlen szomszédjához sem.")
             return
+
+    def _show_topology(self) -> None:
+        for line in nx.generate_network_text(self.topology):
+            self.logger.info(line)
 
     def check_timeout(self) -> None:
         if self.lsdb.get_all() and self.last_lsa_update + td(seconds=TIMEOUT) < dt.now():
