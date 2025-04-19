@@ -335,6 +335,7 @@ class OSPF:
                         )
                 )
 
+                self.network_interface.send(packet= lsu_packet, interface= intf)
                 self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= lsu_packet)
 
                 self._info_logger.info(f" LSUpdate csomag küldve {intf} interfészen")
@@ -484,7 +485,7 @@ class OSPF:
 if __name__ == '__main__':
     router_name = sys.argv[1]
     network_interface = Interface()
-    info_logger = InfoLogger(router_name, INFO_LOG_DIR)
+    info_logger = InfoLogger(name= router_name, log_dir= INFO_LOG_DIR)
 
     ospf = OSPF(router_name, CONFIG_PATH, network_interface, info_logger)
     ospf.start()

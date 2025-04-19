@@ -58,7 +58,7 @@ class InfoLogger:
 
         try:
 
-            folder_path = Path(self._name)
+            folder_path = Path(self._log_dir)
             folder_path.mkdir(exist_ok=True)
 
             for item in folder_path.iterdir():
