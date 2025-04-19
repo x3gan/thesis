@@ -14,7 +14,6 @@ class Interface(AbstractInterface):
         :return:
         """
         sendp(x= packet, iface= interface, verbose= False)
-        utils.write_pcap_file(pcap_file= f'{interface}', packet= packet)
 
     def receive(self, interface : str) -> Packet | None:
         """

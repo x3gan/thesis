@@ -1,3 +1,6 @@
+from state import State
+
+
 class Neighbour:
     def __init__(self):
         self.rid = None
@@ -6,7 +9,7 @@ class Neighbour:
         self.last_seen = None
         self.state = 'DOWN'
 
-    def build(self, rid = None, ip = None, mac = None, last_seen = None, state = 'DOWN'):
+    def build(self, rid = None, ip = None, mac = None, last_seen = None, state = State.DOWN):
         if rid is not None:
             self.rid = rid
         if ip is not None:
