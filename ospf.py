@@ -1,31 +1,24 @@
 import os
-
-from datetime import datetime as dt
-from datetime import timedelta as td
-from typing import Any
-
-import networkx as nx
-import logging
-import queue
 import sys
+import queue
+import logging
 import threading
-from pathlib import Path
+import networkx as nx
+
 from time import sleep
-
-from networkx.drawing.nx_agraph import to_agraph
-from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd, OSPF_Link
-from scapy.layers.inet import IP
-from scapy.layers.l2 import Ether
-from scapy.packet import Packet
-from scapy.sendrecv import sendp, sniff
-
 from yaml import safe_load
+from datetime import timedelta as td
+from datetime import datetime as dt
 
-import utils
-from interface import Interface
+from scapy.packet import Packet
+from scapy.layers.l2 import Ether
+from scapy.layers.inet import IP
+from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd, OSPF_Link
+
 from lsdb import LSDB
-from neighbour import Neighbour
 from state import State
+from neighbour import Neighbour
+from interface import Interface
 from monitoring.info_logger import InfoLogger
 from monitoring.pcap_logger import PcapLogger
 
@@ -83,7 +76,7 @@ class OSPF:
         self.interfaces = get_device_interfaces_w_mac(self.router_name, config['interfaces'])
 
         self.lsdb             = LSDB()
-        self.packet_queue     = queue.PriorityQueue()
+        self.packet_queue     = queue.Queue()
         self.neighbour_states = {intf: [] for intf in self.interfaces}
         self.routing_table    = {}
 
@@ -342,7 +335,6 @@ class OSPF:
                         )
                 )
 
-                sendp(x = lsu_packet, iface= intf, verbose= False)
                 self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= lsu_packet)
 
                 self._info_logger.info(f" LSUpdate csomag küldve {intf} interfészen")
