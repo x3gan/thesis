@@ -24,15 +24,16 @@ class Topology(Topo):
         *args: További argumentumok.
         **params: További paraméterek.
         """
-        for router in self.config['routers']:
-            router_name = router
-            self.addHost(router_name)
+        if self.config['routers']:
+            for router in self.config['routers']:
+                router_name = router
+                self.addHost(router_name)
 
-        for router, info in self.config['routers'].items():
-            for interface in self.config['routers'][router]['interfaces']:
-                for neighbour in interface['neighbours']:
-                    if not self._has_link(router, neighbour):
-                        self.addLink(router, neighbour)
+            for router, info in self.config['routers'].items():
+                for interface in self.config['routers'][router]['interfaces']:
+                    for neighbour in interface['neighbours']:
+                        if not self._has_link(router, neighbour):
+                            self.addLink(router, neighbour)
 
     def _has_link(self, router : str, neighbour : str) -> bool:
         """
