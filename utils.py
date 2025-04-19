@@ -9,14 +9,7 @@ from yaml import safe_load
 
 
 
-def write_pcap_file(pcap_file, packet):
-    """
-    A kuldott/elfogott csomagok kiirasa a pcap fileba
-    """
-    file_path = f'packet_logs/{pcap_file}.pcap'
 
-    pcap_writer = PcapWriter(file_path, append= True, sync= True)
-    pcap_writer.write(packet)
 
 
 def get_config(filepath):

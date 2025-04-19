@@ -25,7 +25,9 @@ import utils
 from interface import Interface
 from lsdb import LSDB
 from neighbour import Neighbour
-from states import States
+from state import State
+from monitoring.info_logger import InfoLogger
+from monitoring.pcap_logger import PcapLogger
 
 
 MULTICAST_IP = '224.0.0.5'
@@ -35,47 +37,8 @@ TIMEOUT        = 10
 DEAD_INTERVAL  = 40
 HELLO_INTERVAL = 10
 
-logging.basicConfig(level=logging.INFO)
-
-def setup_logger(name : str) -> logging.Logger:
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
-
-    log_path = f'logs/{name}.log'
-    file_handler = logging.FileHandler(log_path)
-    file_handler.setFormatter(logging.Formatter(
-        '[%(asctime)s] %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    ))
-
-    logger.addHandler(file_handler)
-    return logger
-
-
-def cleanup() -> None:
-    """
-    Törli a log és packet_logs mappák tartalmát, kivéve az ignore listán lévő fájlokat
-    :return
-    """
-    log_folders = ['logs', 'packet_logs']
-    ignored_files = {'README.md', '__init__.py', '.gitkeep'}
-
-    for folder in log_folders:
-        try:
-            folder_path = Path(folder)
-
-            folder_path = Path(folder)
-            folder_path.mkdir(exist_ok=True)
-
-            for item in folder_path.iterdir():
-                if item.is_file() and item.name not in ignored_files:
-                    try:
-                        item.unlink()
-                    except (PermissionError, FileNotFoundError):
-                        logging.error(f"Nem lehetett törölni a fájlt: {item}")
-        except FileNotFoundError:
-            logging.error(f"A mappa nem található: {folder}")
-
+CONFIG_PATH = 'config/router.yml'
+INFO_LOG_DIR = 'logs'
 
 def get_config(filepath):
     with open(filepath, 'r') as file:
@@ -105,7 +68,7 @@ def get_device_interfaces_w_mac(router_name : str, interfaces : list) -> dict:
 
 class OSPF:
 
-    def __init__(self, name : str, config_path : str, interface : Interface) -> None:
+    def __init__(self, name : str, config_path : str, interface : Interface, info_logger: InfoLogger) -> None:
         """
         OSPF router inicializálása.
         :param name: A router neve, ahogyan a hálózatban szerepel
@@ -130,9 +93,10 @@ class OSPF:
         self.is_simulation_done    = False
 
         # Csinal egy logger-t, ami a router nevét tartalmazza
-        self.logger            = setup_logger(self.router_name)
-        self.network_interface = interface
-        self.topology          = nx.Graph()
+        self._info_logger       = info_logger.logger
+        self._pcap_logger       = PcapLogger()
+        self.network_interface  = interface
+        self.topology           = nx.Graph()
 
     def _send_hello(self, intf : str) -> None:
         """
@@ -144,9 +108,9 @@ class OSPF:
             hello_packet = self._create_hello_packet(intf)
 
             self.network_interface.send(packet= hello_packet, interface= intf)
-            utils.write_pcap_file(pcap_file= f'{intf}', packet= hello_packet)
+            self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= hello_packet)
 
-            self.logger.info(f" Hello csomag küldve {intf} interfészen")
+            self._info_logger.info(f" Hello csomag küldve {intf} interfészen")
 
             sleep(HELLO_INTERVAL)
 
@@ -154,7 +118,7 @@ class OSPF:
         if self.neighbour_states[intf]:
             neighbour_list = [
                 neighbour.rid for neighbour in self.neighbour_states[intf]
-                if neighbour.state != States.DOWN
+                if neighbour.state != State.DOWN
             ]
         else:
             neighbour_list = []
@@ -200,14 +164,14 @@ class OSPF:
                 neighbour = self._create_neighbour(neighbour_rid, neighbour_ip, neighbour_mac)
                 self.neighbour_states[intf].append(neighbour)
 
-                self.logger.info(f" {intf} szomszéd INIT: {neighbour.rid}")
+                self._info_logger.info(f" {intf} szomszéd INIT: {neighbour.rid}")
 
             neighbour.last_seen = dt.now()
 
-            if self.rid in packet[OSPF_Hello].neighbors and neighbour.state == States.INIT:
-                neighbour.state = States.TWOWAY
+            if self.rid in packet[OSPF_Hello].neighbors and neighbour.state == State.INIT:
+                neighbour.state = State.TWOWAY
 
-                self.logger.info(f" {intf} szomszéd 2-WAY: {neighbour.rid}")
+                self._info_logger.info(f" {intf} szomszéd 2-WAY: {neighbour.rid}")
 
     def _get_neighbour(self, intf : str, src : str) -> Neighbour | None:
         for neighbour in self.neighbour_states[intf]:
@@ -232,7 +196,7 @@ class OSPF:
             ip        = ip,
             mac       = mac,
             last_seen = dt.now(),
-            state     = States.INIT
+            state     = State.INIT
         )
 
         return neighbour
@@ -248,7 +212,7 @@ class OSPF:
 
             if packet and packet.haslayer(OSPF_Hdr):
                 self.packet_queue.put((intf, packet))
-                utils.write_pcap_file(f'{intf}', packet)
+                self._pcap_logger.write_pcap_file(f'{intf}', packet)
 
     def _process_packet(self) -> None:
         """
@@ -263,7 +227,7 @@ class OSPF:
                 continue
 
             if self.rid != packet[OSPF_Hdr].src:
-                self.logger.info(f" Csomag érkezett a(z) {intf} interfészen: {packet.summary()}")
+                self._info_logger.info(f" Csomag érkezett a(z) {intf} interfészen: {packet.summary()}")
 
             header_type = packet[OSPF_Hdr].type
 
@@ -283,31 +247,31 @@ class OSPF:
 
             with self.neighbour_states_lock:
                 for neighbour in list(self.neighbour_states[intf]):
-                    if neighbour.state == States.TWOWAY:
+                    if neighbour.state == State.TWOWAY:
                         sleep(1)
-                        neighbour.state = States.EXSTART
+                        neighbour.state = State.EXSTART
 
-                        self.logger.info(f" {intf} szomszéd EXSTART: {neighbour.rid}")
+                        self._info_logger.info(f" {intf} szomszéd EXSTART: {neighbour.rid}")
 
-                    if neighbour.state == States.EXSTART:
+                    if neighbour.state == State.EXSTART:
                         sleep(1)
-                        neighbour.state = States.EXCHANGE
+                        neighbour.state = State.EXCHANGE
 
-                        self.logger.info(f" {intf} szomszéd EXCHANGE: {neighbour.rid}")
+                        self._info_logger.info(f" {intf} szomszéd EXCHANGE: {neighbour.rid}")
 
-                    if neighbour.state == States.EXCHANGE:
+                    if neighbour.state == State.EXCHANGE:
                         sleep(1)
-                        neighbour.state = States.LOADING
+                        neighbour.state = State.LOADING
 
-                        self.logger.info(f" {intf} szomszéd LOADING: {neighbour.rid}")
+                        self._info_logger.info(f" {intf} szomszéd LOADING: {neighbour.rid}")
 
-                    if neighbour.state == States.LOADING:
+                    if neighbour.state == State.LOADING:
                         sleep(1)
-                        neighbour.state = States.FULL
+                        neighbour.state = State.FULL
                         self._generate_router_lsa()
                         self._flood_lsa()
 
-                        self.logger.info(f" {intf} szomszéd FULL: {neighbour.rid}")
+                        self._info_logger.info(f" {intf} szomszéd FULL: {neighbour.rid}")
 
             sleep(1)
 
@@ -322,7 +286,7 @@ class OSPF:
         links = []
         for intf, neighbours in self.neighbour_states.items():
             for neighbour in neighbours:
-                if neighbour.state == States.FULL:
+                if neighbour.state == State.FULL:
                     link = OSPF_Link(
                         type   = link_type,
                         id     = neighbour.rid,
@@ -356,7 +320,7 @@ class OSPF:
         lsa_list = self.lsdb.get_all()
 
         for neighbour in self.neighbour_states[intf]:
-            if neighbour.state == States.FULL and neighbour.rid != exclude_rid:
+            if neighbour.state == State.FULL and neighbour.rid != exclude_rid:
 
                 lsu_packet = (
                         Ether(
@@ -379,19 +343,19 @@ class OSPF:
                 )
 
                 sendp(x = lsu_packet, iface= intf, verbose= False)
-                utils.write_pcap_file(pcap_file= f'{intf}', packet= lsu_packet)
+                self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= lsu_packet)
 
-                self.logger.info(f" LSUpdate csomag küldve {intf} interfészen")
+                self._info_logger.info(f" LSUpdate csomag küldve {intf} interfészen")
 
     def _is_down(self, intf: str) -> None:
         while True:
             with self.neighbour_states_lock:
                 for neighbour in list(self.neighbour_states[intf]):
-                    if (neighbour.state != States.DOWN and
+                    if (neighbour.state != State.DOWN and
                         neighbour.last_seen + td(seconds= DEAD_INTERVAL) < dt.now()):
                         self.neighbour_states[intf].remove(neighbour)
 
-                        self.logger.info(f" Elvesztett a {neighbour.rid} szomszéddal a kapcsolat a(z) {intf} interfészen")
+                        self._info_logger.info(f" Elvesztett a {neighbour.rid} szomszéddal a kapcsolat a(z) {intf} interfészen")
 
             sleep(2)
 
@@ -427,7 +391,7 @@ class OSPF:
             print(self.lsdb.get_all())
             self.last_lsa_update = dt.now()
 
-            self.logger.info(f" {self.router_name} LSDB frissítve: {lsa.summary()}")
+            self._info_logger.info(f" {self.router_name} LSDB frissítve: {lsa.summary()}")
 
             return True
 
@@ -488,7 +452,7 @@ class OSPF:
                     'next_hop' : path[1]
                 }
 
-                self.logger.info(f" Legjobb útvonal {source} -> {target}: Út: {path}, Költség: {distances[target]}")
+                self._info_logger.info(f" Legjobb útvonal {source} -> {target}: Út: {path}, Költség: {distances[target]}")
 
         except nx.NetworkXNoPath:
             logging.error(f"Nincs elérhető útvonal a(z) {self.router_name} egyetlen szomszédjához sem.")
@@ -496,13 +460,14 @@ class OSPF:
 
     def _show_topology(self) -> None:
         for line in nx.generate_network_text(self.topology):
-            self.logger.info(line)
+            self._info_logger.info(line)
 
     def check_timeout(self) -> None:
         if self.lsdb.get_all() and self.last_lsa_update + td(seconds=TIMEOUT) < dt.now():
             self.is_simulation_done = True
 
     def start(self) -> None:
+        self._pcap_logger.cleanup(self.router_name, log_dir= 'packet_logs')
 
         threads = []
         for interface in self.interfaces:
@@ -525,12 +490,9 @@ class OSPF:
             thread.start()
 
 if __name__ == '__main__':
-    path = 'config/router.yml'
-
     router_name = sys.argv[1]
     network_interface = Interface()
+    info_logger = InfoLogger(router_name, INFO_LOG_DIR)
 
-    cleanup()
-
-    ospf = OSPF(router_name, path, network_interface)
+    ospf = OSPF(router_name, CONFIG_PATH, network_interface, info_logger)
     ospf.start()
