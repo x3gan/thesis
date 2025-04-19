@@ -52,7 +52,7 @@ class NetworkManager:
     def _start_ospf(self) -> None:
         """Elindítja az OSPF kódját a routereken."""
         for router in self._network.hosts:
-            router.cmd("sudo python3 ospf.py {router.name} &")
+            router.cmd(f"sudo python3 ospf.py {router.name} &")
 
     def _configure_interfaces(self) -> None:
         """Konfigurálja a hálózati eszközök interfészeit."""
