@@ -1,329 +1,520 @@
-import logging
-import queue
-import random
+import os
 import sys
+import queue
+import logging
 import threading
+import networkx as nx
+
 from time import sleep
-from datetime import datetime
+from yaml import safe_load
+from datetime import timedelta as td
+from datetime import datetime as dt
 
-from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_DBDesc
-from scapy.layers.inet import IP
+from scapy.packet import Packet
 from scapy.layers.l2 import Ether
-from scapy.sendrecv import sniff, sendp, AsyncSniffer
-from sympy.codegen.ast import continue_
+from scapy.layers.inet import IP
+from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd, OSPF_Link
 
-import utils
-from states import States
 from lsdb import LSDB
+from state import State
 from neighbour import Neighbour
+from interface import Interface
+from monitoring.info_logger import InfoLogger
+from monitoring.pcap_logger import PcapLogger
+
 
 MULTICAST_IP = '224.0.0.5'
 MULTICAST_MAC = '01:00:5e:00:00:05'
 
+TIMEOUT        = 10
+DEAD_INTERVAL  = 40
 HELLO_INTERVAL = 10
-DEAD_INTERVAL = 40
 
-HELLO_PRIORITY = 1
-DEFAULT_PRIORITY = 5
+CONFIG_PATH = 'config/router.yml'
+INFO_LOG_DIR = 'logs'
 
-logging.basicConfig(level=logging.INFO)
+def get_config(filepath):
+    with open(filepath, 'r') as file:
+        config = safe_load(file)
+
+    return config
+
+
+def get_interface_mac(name):
+    mac = os.popen(f"cat /sys/class/net/{name}/address").read().strip()
+    return mac
+
+
+def get_device_interfaces_w_mac(router_name : str, interfaces : list) -> dict:
+    interface_info = {}
+
+    for interface in interfaces:
+        interface_name = f"{router_name}-{interface['name']}"
+
+        interface_info[interface_name] = {
+            'mac': get_interface_mac(interface_name),
+            'ip' : interface['ip']
+        }
+
+    return interface_info
+
 
 class OSPF:
-    def __init__(self, name, config_path):
-        self.name = name
 
-        ospf_config           = utils.get_config(config_path)['ospf'][self.name]
-        self.interfaces       = utils.get_device_interfaces_w_mac()
-        self.prio             = random.randint(1, 255)
-        self.rid              = ospf_config['rid']
-        self.areaid           = ospf_config['areaid']
-        self.netmask          = ospf_config['netmask']
+    def __init__(self, name : str, config_path : str, interface : Interface, info_logger: InfoLogger) -> None:
+        """
+        OSPF router inicializálása.
+        :param name: A router neve, ahogyan a hálózatban szerepel
+        :param config_path: Az OSPF konfiguráció elérési útja
+        """
+        self.router_name = name
 
-        self.neighbour_states = {
-            intf: [] for intf in self.interfaces
-        }
-        self.lsdb = LSDB()
+        config = get_config(config_path)['routers'][router_name]
 
-        self.packet_queue          = queue.PriorityQueue()
+        self.rid        = config['rid']
+        self.areaid     = config['area']
+        self.interfaces = get_device_interfaces_w_mac(self.router_name, config['interfaces'])
+
+        self.lsdb             = LSDB()
+        self.packet_queue     = queue.Queue()
+        self.neighbour_states = {intf: [] for intf in self.interfaces}
+        self.routing_table    = {}
+
         self.neighbour_states_lock = threading.Lock()
+        self.lsa_sequence_number   = 0
+        self.last_lsa_update       = dt.now()
+        self._stop_event           = threading.Event()
+        self._threads              = []
 
-    def display_info(self):
-        print(f'OSPF Name: {self.name}')
-        print(f'OSPF RID: {self.rid}')
-        print(f'OSPF Area ID: {self.areaid}')
-        print(f'OSPF Netmask: {self.netmask}')
-        print(f'OSPF Interfaces: {self.interfaces}')
-        print(f'OSPF Neighbour States: {self.neighbour_states}')
+        # Csinal egy logger-t, ami a router nevét tartalmazza
+        self._info_logger       = info_logger.logger
+        self._pcap_logger       = PcapLogger()
+        self.network_interface  = interface
+        self.topology           = nx.Graph()
 
-    def send_hello_packet(self, intf):
+    def _send_hello(self, intf : str) -> None:
         """
-        10 másodpercenként küldi a router Hello csomagját, hogy jelezze még életben van.
-
-        :param intf: Annak az interfesznek a neve, amelyik a csomagot kuldi
+        OSPF Hello csomag küldése multicast címen.
+        :param intf: Az az interfész, amelyik küldi a csomagot
+        :return:
         """
-        while True:
+        while not self._stop_event.is_set():
+            hello_packet = self._create_hello_packet(intf)
 
-            if self.neighbour_states[intf]:
-                neighbours = [
-                    neighbour.rid for neighbour in self.neighbour_states[intf]
-                    if neighbour.state != States.DOWN
-                ]
-            else:
-                neighbours = []
+            self.network_interface.send(packet= hello_packet, interface= intf)
+            self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= hello_packet)
 
-            print(f'Az {self.interfaces[intf]["ip"]} interfészen az ismert szomszédok'
-                  f' {neighbours}')
+            self._info_logger.info(f" Hello csomag küldve {intf} interfészen")
 
-            hello_packet = (
-                    Ether(
-                        dst = MULTICAST_MAC,
-                        src = self.interfaces[intf]['mac']
-                    )/
-                    IP(
-                        dst   = MULTICAST_IP,
-                        src   = self.interfaces[intf]['ip'],
-                        proto = 89
-                    )/
-                    OSPF_Hdr(
-                        version = 2,
-                        type    = 1,
-                        src     = self.rid,
-                        area    = self.areaid
+            if self._stop_event.wait(timeout= HELLO_INTERVAL):
+                break
 
-                    )/
-                    OSPF_Hello(
-                        mask          = self.netmask,
-                        prio          = self.prio,
-                        hellointerval = HELLO_INTERVAL,
-                        deadinterval  = DEAD_INTERVAL,
-                        neighbors     = neighbours
-                    )
-            )
-            sendp(hello_packet, iface= intf, verbose= False)
-            utils.write_pcap_file(f'{self.name}_{intf}', hello_packet)
-
-            logging.info(f'[{datetime.now()}] Az {self.rid} - {intf} Hello csomagot küldött')
-            sleep(HELLO_INTERVAL)
-
-    def check_on_neighbours(self, intf):
-        while True:
-
-            # Alszik 5 másodpercet, hogy ne legyen túl gyakori a "lekérdezés"
-            sleep(5)
-
-            # Lista-másolat, különben hibát dob, iterálás közben nem lehetne módosítani
-            for neighbour in list(self.neighbour_states[intf]):
-                last_seen = neighbour.last_seen
-
-                if not last_seen:
-                    continue
-
-                if (datetime.now() - last_seen).total_seconds() > DEAD_INTERVAL:
-                    logging.info(f'[{datetime.now()}] {self.rid} - {intf} : {neighbour.rid} '
-                                 f'szomszéd nem válaszol.')
-
-                    self.neighbour_states[intf].remove(neighbour)
-
-    def process_hello_packet(self, intf, packet, neighbour_rid):
-        existing_neighbour = next(
-            (neighbour for neighbour in self.neighbour_states[intf] if
-             neighbour.rid == neighbour_rid),
-            None
-        )
-
-        if not existing_neighbour:
-            new_neighbour = Neighbour().build(
-                rid=neighbour_rid,
-                ip=packet[IP].src,
-                mac=packet[Ether].src,
-                last_seen=datetime.now(),
-                state=States.INIT
-            )
-            self.neighbour_states[intf].append(new_neighbour)
-            logging.info(
-                f'[{datetime.now()}] Új szomszéd került a listába: {new_neighbour.rid}')
+    def _create_hello_packet(self, intf: str) -> Packet:
+        if self.neighbour_states[intf]:
+            neighbour_list = [
+                neighbour.rid for neighbour in self.neighbour_states[intf]
+                if neighbour.state != State.DOWN
+            ]
         else:
-            existing_neighbour.last_seen = datetime.now()
+            neighbour_list = []
 
-        if self.rid in packet[OSPF_Hello].neighbors:
-            if existing_neighbour and existing_neighbour.state == States.INIT:
-                existing_neighbour.state = States.TWOWAY
-                logging.info(f'[{datetime.now()}] {existing_neighbour.rid} : INIT -> TWOWAY')
+        packet = (
+                Ether(
+                    dst= MULTICAST_MAC,
+                    src= self.interfaces[intf]['mac']
+                ) /
+                IP(
+                    dst= MULTICAST_IP,
+                    src= self.interfaces[intf]['ip'],
+                    proto= 89
+                ) /
+                OSPF_Hdr(
+                    version= 2,
+                    type= 1,
+                    src= self.rid,
+                    area= self.areaid
 
-    def process_dbd_packet(self, intf, packet, neighbour_rid):
-        """
-        OSPF Database Description (DBD) csomagok feldolgozása.
-        intf:
-        packet:
-        neighbour_rid:
-        """
-        neighbour = next(
-            (neighbour for neighbour in self.neighbour_states[intf] if
-             neighbour.rid == neighbour_rid),
-            None
+                ) /
+                OSPF_Hello(
+                    hellointerval= HELLO_INTERVAL,
+                    deadinterval= DEAD_INTERVAL,
+                    neighbors= neighbour_list
+                )
         )
 
-        logging.info(f'[{datetime.now()}] OSPF DBD csomag érkezett {neighbour_rid}-től.')
-        if packet[OSPF_DBDesc].ddseq == 1:
-            print('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
-            if neighbour.is_master is None and neighbour.state == States.EXSTART:
-                if self.rid < neighbour_rid:
-                    neighbour.is_master = False
-                else:
-                    neighbour.is_master = True
+        return packet
 
-    def receiving_packets(self, intf):
-        while True:
-            packet = sniff(iface= intf, count= 1, timeout= 1) # -> async sniff
+    def _process_hello(self, intf : str, packet : Packet) -> None:
+        if packet[OSPF_Hdr].src == self.rid:
+            return
 
-            if not packet:
-                continue
-            else:
-                if packet[0].haslayer(OSPF_Hdr):
-                    utils.write_pcap_file(f'{self.name}_{intf}', packet)
-                    ospf_hdr = packet[0][OSPF_Hdr]
-                    neighbour_rid = ospf_hdr.src
+        with self.neighbour_states_lock:
+            neighbour_rid = packet[OSPF_Hdr].src
+            neighbour_ip  = packet[IP].src
+            neighbour_mac = packet[Ether].src
 
-                    if self.rid == neighbour_rid:
-                        continue
+            neighbour = self._get_neighbour(intf, neighbour_rid)
 
-                    self.sort_packet(
-                        header_type= ospf_hdr.type,
-                        intf= intf,
-                        packet= packet,
-                        neighbour_rid= neighbour_rid
-                    )
-                    utils.write_pcap_file('{self.name}_{intf}', packet)
+            if neighbour is None:
+                neighbour = self._create_neighbour(neighbour_rid, neighbour_ip, neighbour_mac)
+                self.neighbour_states[intf].append(neighbour)
 
-    def sort_packet(self, header_type, intf, packet, neighbour_rid):
-        if header_type == 1:
-            self.packet_queue.put((HELLO_PRIORITY, (intf, packet[0], neighbour_rid)))
-        if header_type == 2:
-            self.packet_queue.put((DEFAULT_PRIORITY, (intf, packet[0], neighbour_rid)))
+                self._info_logger.info(f" {intf} szomszéd INIT: {neighbour.rid}")
 
-    def process_queued_packet(self):
-        while True:
+            neighbour.last_seen = dt.now()
+
+            if self.rid in packet[OSPF_Hello].neighbors and neighbour.state == State.INIT:
+                neighbour.state = State.TWOWAY
+
+                self._info_logger.info(f" {intf} szomszéd 2-WAY: {neighbour.rid}")
+
+    def _get_neighbour(self, intf : str, src : str) -> Neighbour | None:
+        for neighbour in self.neighbour_states[intf]:
+            if neighbour.rid == src:
+                return neighbour
+
+        return None
+
+    @staticmethod
+    def _create_neighbour(rid : str, ip : str, mac : str) -> Neighbour:
+        """
+        Szomszéd létrehozása az OSPF Hello csomag alapján.
+        :param rid: A szomszéd router ID-ja
+        :param ip: A szomszéd IP címe
+        :param mac: A szomszéd MAC címe
+        :return:
+        """
+        neighbour = Neighbour()
+
+        neighbour.build(
+            rid       = rid,
+            ip        = ip,
+            mac       = mac,
+            last_seen = dt.now(),
+            state     = State.INIT
+        )
+
+        return neighbour
+
+    def _listen(self, intf : str) -> None:
+        """
+        Az adott interfész figyel, és ha kap egy csomagot, akkor azt belerakja a packet queue-ba.
+        :param intf: Az az interfész, amelyik figyeli a csomagokat
+        :return:
+        """
+        while not self._stop_event.is_set():
+            packet = self.network_interface.receive(interface= intf)
+
+            if packet and packet.haslayer(OSPF_Hdr):
+                self.packet_queue.put((intf, packet))
+                self._pcap_logger.write_pcap_file(f'{intf}', packet)
+
+    def _process_packet(self) -> None:
+        """
+        A packet queue-bol sorra olvassuk ki a csomagokat és típustól függően tovább küldi
+        feldolgozásra őket.
+        :return:
+        """
+        while not self._stop_event.is_set():
             try:
-                _, (intf, packet, neighbour_rid) = self.packet_queue.get(timeout=1)
+                intf, packet = self.packet_queue.get(timeout=1)
             except queue.Empty:
                 continue
 
+            if self.rid != packet[OSPF_Hdr].src:
+                self._info_logger.info(f" Csomag érkezett a(z) {intf} interfészen: {packet.summary()}")
+
             header_type = packet[OSPF_Hdr].type
 
-            if header_type == 1:
-                self.process_hello_packet(intf, packet, neighbour_rid)
-            elif header_type == 2:
-                self.process_dbd_packet(intf, packet, neighbour_rid)
+            if header_type == 1:  # Hello csomag
+                self._process_hello(intf, packet)
+            if header_type == 4: # LSUpdate csomag
+                self._process_lsu(packet)
 
-    def send_dbd_packet(self, intf, neighbour_rid):
+    def _state_watch(self, intf : str) -> None:
         """
-        Ures DBD csomag kuldese, hogy eldontse 2 router, hogy ki a Master es ki a Slave
-
-        :param intf: Az interfesz, amelyik a packetet kuldi
-        :param neighbour_rid: Az a szomszed, akivel a kapcsolatot szeretnenk felallitani
+        Interfészenként megnézzük a szomszédok állapotát és frissítjük azt.
+        :param intf: Az aktuális router azon interfésze, amelyiket nézzük
+        :return:
         """
-        neighbour = next((nbh for nbh in self.neighbour_states[intf]
-                         if nbh.rid == neighbour_rid), None)
+        while not self._stop_event.is_set():
 
-        if not neighbour:
+            with self.neighbour_states_lock:
+                for neighbour in list(self.neighbour_states[intf]):
+                    if neighbour.state == State.TWOWAY:
+                        if self._stop_event.wait(timeout=1):
+                            break
+
+                        neighbour.state = State.EXSTART
+
+                        self._info_logger.info(f" {intf} szomszéd EXSTART: {neighbour.rid}")
+
+                    if neighbour.state == State.EXSTART:
+                        if self._stop_event.wait(timeout=1):
+                            break
+
+                        neighbour.state = State.EXCHANGE
+
+                        self._info_logger.info(f" {intf} szomszéd EXCHANGE: {neighbour.rid}")
+
+                    if neighbour.state == State.EXCHANGE:
+                        if self._stop_event.wait(timeout=1):
+                            break
+
+                        neighbour.state = State.LOADING
+
+                        self._info_logger.info(f" {intf} szomszéd LOADING: {neighbour.rid}")
+
+                    if neighbour.state == State.LOADING:
+                        if self._stop_event.wait(timeout=1):
+                            break
+
+                        neighbour.state = State.FULL
+                        self._generate_router_lsa()
+                        self._flood_lsa()
+
+                        self._info_logger.info(f" {intf} szomszéd FULL: {neighbour.rid}")
+
+            if self._stop_event.wait(timeout= 1):
+                break
+
+    def _generate_router_lsa(self) -> None:
+        """
+        Legeneraljuk az aktualis router LSA-jet, minden interfeszen, minden szomszeddal es ezt
+        beletesszuk a router LSDB-jebe.
+        :return:
+        """
+        link_type = 1
+
+        links = []
+        for intf, neighbours in self.neighbour_states.items():
+            for neighbour in neighbours:
+                if neighbour.state == State.FULL:
+                    link = OSPF_Link(
+                        type   = link_type,
+                        id     = neighbour.rid,
+                        data   = self.interfaces[intf]['ip'],
+                        metric = 1
+                    )
+                    links.append(link)
+
+        lsa = OSPF_Router_LSA(
+                id        = self.rid,
+                adrouter  = self.rid,
+                seq       = self.lsa_sequence_number,
+                linkcount = len(links),
+                linklist  = links
+        )
+
+        self.lsa_sequence_number += 1
+        self.lsdb.add(lsa)
+
+        print(self.lsdb.get_all())
+
+    def _flood_lsa(self, intf = None, exclude_rid = None) -> None:
+        if not self.lsdb.get(self.rid, 1):
+            self._generate_router_lsa()
+
+        if intf is None:
+            for intf in self.interfaces:
+                self._flood_lsa(intf)
             return
 
-        default_layers = (
-            Ether(
-                dst = neighbour.mac,
-                src = self.interfaces[intf]['mac']
-            )/
-            IP(
-                dst   = neighbour.ip,
-                src   = self.interfaces[intf]['ip'],
-                proto = 89
-            )/
-            OSPF_Hdr(
-                version = 2,
-                type    = 2,
-                src     = self.rid,
-                area    = self.areaid
-            ))
+        lsa_list = self.lsdb.get_all()
 
-        if (
-            neighbour.is_master is None and
-            neighbour.state == States.EXSTART
-        ):
+        for neighbour in self.neighbour_states[intf]:
+            if neighbour.state == State.FULL and neighbour.rid != exclude_rid:
 
-            dbd_packet_layer = (
-                OSPF_DBDesc(
-                    ddseq = 1
+                lsu_packet = (
+                        Ether(
+                            dst = neighbour.mac,
+                            src = self.interfaces[intf]['mac']
+                        ) /
+                        IP(
+                            dst   = neighbour.ip,
+                            src   = self.interfaces[intf]['ip'],
+                            proto = 89
+                        ) /
+                        OSPF_Hdr(
+                            version = 2,
+                            type    = 4,
+                            src     = self.rid,
+                            area    = self.areaid
+                        ) / OSPF_LSUpd(
+                            lsalist = lsa_list
+                        )
                 )
+
+                self.network_interface.send(packet= lsu_packet, interface= intf)
+                self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= lsu_packet)
+
+                self._info_logger.info(f" LSUpdate csomag küldve {intf} interfészen")
+
+    def _is_down(self, intf: str) -> None:
+        while not self._stop_event.is_set():
+            with self.neighbour_states_lock:
+                for neighbour in list(self.neighbour_states[intf]):
+                    if (neighbour.state != State.DOWN and
+                        neighbour.last_seen + td(seconds= DEAD_INTERVAL) < dt.now()):
+                        self.neighbour_states[intf].remove(neighbour)
+
+                        self._info_logger.info(f" Elvesztett a {neighbour.rid} szomszéddal a kapcsolat a(z) {intf} interfészen")
+
+            if self._stop_event.wait(timeout= DEAD_INTERVAL):
+                break
+
+    def _process_lsu(self, packet : Packet) -> None:
+        lsa_list    = packet[OSPF_LSUpd].lsalist
+        lsa_updated = False
+
+        for lsa in lsa_list:
+            if self._process_lsa(lsa):
+                lsa_updated = True
+
+        if lsa_updated:
+            self._run_spf()
+            self._show_topology()
+            self._flood_lsa(exclude_rid= packet[OSPF_Hdr].src)
+
+    def _process_lsa(self, lsa : Packet) -> bool:
+        """
+        LSA feldolgozása, ha még nem tároltunk róla információt vagy a beérkező információ újabb
+        mint az általunk ismert, akkor frissítjük a LSDB-t.
+
+        :param lsa: A beérkező LSA csomag
+        :return:
+        """
+        sender_rid = lsa[OSPF_Router_LSA].adrouter
+        lsa_type   = lsa[OSPF_Router_LSA].type
+
+        existing_lsa = self.lsdb.get(sender_rid, lsa_type)
+
+
+        if not existing_lsa or lsa.seq > existing_lsa.seq:
+            self.lsdb.add(lsa)
+            print(self.lsdb.get_all())
+            self.last_lsa_update = dt.now()
+
+            self._info_logger.info(f" {self.router_name} LSDB frissítve: {lsa.summary()}")
+
+            return True
+
+        return False
+
+    def _build_topology(self) -> None:
+        """
+        A LSDB-ből kiolvassuk az összes router LSA-t és azok linkjeit, majd ezeket felhasználva
+        felépítjük a topológiát.
+
+        :return:
+        """
+        self.topology.clear()
+
+        for lsa in self.lsdb.get_all():
+            if not isinstance(lsa, OSPF_Router_LSA):
+                continue
+
+            for link in lsa.linklist:
+                self.topology.add_edge(
+                    u_of_edge= lsa.adrouter,
+                    v_of_edge= link.id,
+                    weight    = link.metric
+                )
+
+    def _run_spf(self) -> None:
+        """
+        Meghívja a NetworkX Python könyvtárat és annak segítségével kiszámolja a legrövidebb utat minden Router szempontjából.
+        (Támogatja az egyforma költségű utakkal való számolást is)
+        :return:
+        """
+        self._build_topology()
+
+        source = self.rid
+
+        try:
+            paths = nx.shortest_path(
+                G= self.topology,
+                source= source,
+                target= None,
+                weight= 'weight'
             )
 
-            dbd_packet = default_layers / dbd_packet_layer
-            sendp(dbd_packet, iface=intf, verbose=False)
-            utils.write_pcap_file(f'{self.name}_{intf}', dbd_packet)
-
-            logging.info(f'[{datetime.now()}] {self.rid} - {intf} kezdeti ures DBD csomagot '
-                         f'kuldott {neighbour.rid} -nak')
-
-        elif (
-                neighbour.is_master is not None and
-                neighbour.state == States.EXCHANGE
-        ):
-            headers = self.generate_router_lsa()
-
-            dbd_packet_layer = OSPF_DBDesc(
-                ddseq      = random.randint(2, 65535),
-                lsaheaders = headers
+            distances = nx.shortest_path_length(
+                G= self.topology,
+                source= source,
+                weight= 'weight'
             )
 
-            dbd_packet = default_layers / dbd_packet_layer
-            sendp(dbd_packet, iface=intf, verbose=False)
-            utils.write_pcap_file(f'{self.name}_{intf}', dbd_packet)
+            self.routing_table = {}
+            for target, path in paths.items():
 
-            logging.info(f'[{datetime.now()}] {self.rid} - {intf} DBD csomagot kuldott '
-                         f'{neighbour}-nak')
+                if target == self.rid:
+                    continue
 
-    def generate_router_lsa(self):
-        return self.lsdb
+                self.routing_table[target] = {
+                    'cost' : distances[target],
+                    'next_hop' : path[1]
+                }
 
-    def global_state_watcher(self, intf):
-        while True:
-            for neighbour in self.neighbour_states[intf]:
-                if neighbour.state == States.TWOWAY:
-                    neighbour.state = States.EXSTART
+                self._info_logger.info(f" Legjobb útvonal {source} -> {target}: Út: {path}, Költség: {distances[target]}")
 
-                    logging.info(f'[{datetime.now()}] {self.rid} - {intf} : {neighbour.rid} '
-                                 f'TWOWAY -> EXSTART')
-                    sleep(2)
-                elif neighbour.state == States.EXSTART:
-                    self.send_dbd_packet(intf, neighbour.rid)
-                elif neighbour.state == States.EXCHANGE:
-                    pass
+        except nx.NetworkXNoPath:
+            logging.error(f"Nincs elérhető útvonal a(z) {self.router_name} egyetlen szomszédjához sem.")
+            return
 
+    def _show_topology(self) -> None:
+        for line in nx.generate_network_text(self.topology):
+            self._info_logger.info(line)
+
+    def check_timeout(self) -> None:
+        if self.lsdb.get_all() and self.last_lsa_update + td(seconds=TIMEOUT) < dt.now():
+            self.is_simulation_done = True
+
+    def start(self) -> None:
+        self._pcap_logger.cleanup(self.router_name, log_dir= 'packet_logs')
+        self._stop_event.clear()
+
+        for interface in self.interfaces:
+            hello_thread       = threading.Thread(target= self._send_hello, args= (interface,))
+            listening_thread   = threading.Thread(target= self._listen, args= (interface,))
+            is_down_thread     = threading.Thread(target= self._is_down, args= (interface,))
+            state_watch_thread = threading.Thread(target= self._state_watch, args= (interface,))
+
+            self._threads.extend([
+                hello_thread,
+                listening_thread,
+                is_down_thread,
+                state_watch_thread
+            ])
+
+        process_thread = threading.Thread(target= self._process_packet)
+        self._threads.append(process_thread)
+
+        for thread in self._threads:
+            thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+
+        for thread in self._threads:
+            thread.join()
+
+            if thread.is_alive():
+                logging.warning(f"A {thread.name} szál nem állt le biztonságosan.")
 
 if __name__ == '__main__':
-    utils.cleanup()
+    router_name = sys.argv[1]
+    network_interface = Interface()
+    info_logger = InfoLogger(name= router_name, log_dir= INFO_LOG_DIR)
 
-    filepath = 'ospf.yml'
-    device_name = sys.argv[1]
+    ospf = OSPF(router_name, CONFIG_PATH, network_interface, info_logger)
 
-    ospf = OSPF(device_name, filepath)
-    ospf.display_info()
-
-    threads = []
-
-    for interface in ospf.interfaces:
-        receiver             = threading.Thread(target=ospf.receiving_packets, args=(interface,))
-        hello_packet_sending = threading.Thread(target=ospf.send_hello_packet, args=(interface,))
-        process_packet       = threading.Thread(target=ospf.process_queued_packet, args=())
-        checking_neighbour   = threading.Thread(target=ospf.check_on_neighbours, args=(interface,))
-        state_watcher        = threading.Thread(target=ospf.global_state_watcher, args=(interface,))
-
-        threads.extend([
-            receiver,
-            hello_packet_sending,
-            process_packet,
-            checking_neighbour,
-            state_watcher
-        ])
-
-    for thread in threads:
-        thread.start()
+    try:
+        ospf.start()
+        while True:
+            sleep(0.5)
+    except KeyboardInterrupt:
+        print('Leállítási parancsot kapott... (CTRL + C)')
+        ospf.stop()
+    finally:
+        print('Az OSPF futása leállt.')
