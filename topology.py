@@ -20,7 +20,7 @@ class Topology(Topo):
         A build metódus a Mininet hálózati topológiáját építi fel a konfigurációs fájl alapján.
         A metódus létrehozza a routereket és a közöttük lévő linkeket.
 
-        Parameterek:
+        Paraméterek:
         *args: További argumentumok.
         **params: További paraméterek.
         """

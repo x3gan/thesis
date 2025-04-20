@@ -21,7 +21,7 @@ class Interface(AbstractInterface):
         :param interface: Az interfész neve
         :return: A fogadott csomag
         """
-        packets = sniff(iface= interface, count= 1)
+        packets = sniff(iface= interface, count= 1, timeout= 1)
 
         if packets:
             return packets[0]

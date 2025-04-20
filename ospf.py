@@ -83,7 +83,8 @@ class OSPF:
         self.neighbour_states_lock = threading.Lock()
         self.lsa_sequence_number   = 0
         self.last_lsa_update       = dt.now()
-        self.is_simulation_done    = False
+        self._stop_event           = threading.Event()
+        self._threads              = []
 
         # Csinal egy logger-t, ami a router nevét tartalmazza
         self._info_logger       = info_logger.logger
@@ -97,7 +98,7 @@ class OSPF:
         :param intf: Az az interfész, amelyik küldi a csomagot
         :return:
         """
-        while True:
+        while not self._stop_event.is_set():
             hello_packet = self._create_hello_packet(intf)
 
             self.network_interface.send(packet= hello_packet, interface= intf)
@@ -105,7 +106,8 @@ class OSPF:
 
             self._info_logger.info(f" Hello csomag küldve {intf} interfészen")
 
-            sleep(HELLO_INTERVAL)
+            if self._stop_event.wait(timeout= HELLO_INTERVAL):
+                break
 
     def _create_hello_packet(self, intf: str) -> Packet:
         if self.neighbour_states[intf]:
@@ -200,7 +202,7 @@ class OSPF:
         :param intf: Az az interfész, amelyik figyeli a csomagokat
         :return:
         """
-        while True:
+        while not self._stop_event.is_set():
             packet = self.network_interface.receive(interface= intf)
 
             if packet and packet.haslayer(OSPF_Hdr):
@@ -213,7 +215,7 @@ class OSPF:
         feldolgozásra őket.
         :return:
         """
-        while True:
+        while not self._stop_event.is_set():
             try:
                 intf, packet = self.packet_queue.get(timeout=1)
             except queue.Empty:
@@ -235,38 +237,46 @@ class OSPF:
         :param intf: Az aktuális router azon interfésze, amelyiket nézzük
         :return:
         """
-        while True:
-            self.check_timeout()
+        while not self._stop_event.is_set():
 
             with self.neighbour_states_lock:
                 for neighbour in list(self.neighbour_states[intf]):
                     if neighbour.state == State.TWOWAY:
-                        sleep(1)
+                        if self._stop_event.wait(timeout=1):
+                            break
+
                         neighbour.state = State.EXSTART
 
                         self._info_logger.info(f" {intf} szomszéd EXSTART: {neighbour.rid}")
 
                     if neighbour.state == State.EXSTART:
-                        sleep(1)
+                        if self._stop_event.wait(timeout=1):
+                            break
+
                         neighbour.state = State.EXCHANGE
 
                         self._info_logger.info(f" {intf} szomszéd EXCHANGE: {neighbour.rid}")
 
                     if neighbour.state == State.EXCHANGE:
-                        sleep(1)
+                        if self._stop_event.wait(timeout=1):
+                            break
+
                         neighbour.state = State.LOADING
 
                         self._info_logger.info(f" {intf} szomszéd LOADING: {neighbour.rid}")
 
                     if neighbour.state == State.LOADING:
-                        sleep(1)
+                        if self._stop_event.wait(timeout=1):
+                            break
+
                         neighbour.state = State.FULL
                         self._generate_router_lsa()
                         self._flood_lsa()
 
                         self._info_logger.info(f" {intf} szomszéd FULL: {neighbour.rid}")
 
-            sleep(1)
+            if self._stop_event.wait(timeout= 1):
+                break
 
     def _generate_router_lsa(self) -> None:
         """
@@ -341,7 +351,7 @@ class OSPF:
                 self._info_logger.info(f" LSUpdate csomag küldve {intf} interfészen")
 
     def _is_down(self, intf: str) -> None:
-        while True:
+        while not self._stop_event.is_set():
             with self.neighbour_states_lock:
                 for neighbour in list(self.neighbour_states[intf]):
                     if (neighbour.state != State.DOWN and
@@ -350,7 +360,8 @@ class OSPF:
 
                         self._info_logger.info(f" Elvesztett a {neighbour.rid} szomszéddal a kapcsolat a(z) {intf} interfészen")
 
-            sleep(2)
+            if self._stop_event.wait(timeout= DEAD_INTERVAL):
+                break
 
     def _process_lsu(self, packet : Packet) -> None:
         lsa_list    = packet[OSPF_LSUpd].lsalist
@@ -461,15 +472,15 @@ class OSPF:
 
     def start(self) -> None:
         self._pcap_logger.cleanup(self.router_name, log_dir= 'packet_logs')
+        self._stop_event.clear()
 
-        threads = []
         for interface in self.interfaces:
             hello_thread       = threading.Thread(target= self._send_hello, args= (interface,))
             listening_thread   = threading.Thread(target= self._listen, args= (interface,))
             is_down_thread     = threading.Thread(target= self._is_down, args= (interface,))
             state_watch_thread = threading.Thread(target= self._state_watch, args= (interface,))
 
-            threads.extend([
+            self._threads.extend([
                 hello_thread,
                 listening_thread,
                 is_down_thread,
@@ -477,10 +488,19 @@ class OSPF:
             ])
 
         process_thread = threading.Thread(target= self._process_packet)
-        threads.append(process_thread)
+        self._threads.append(process_thread)
 
-        for thread in threads:
+        for thread in self._threads:
             thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+
+        for thread in self._threads:
+            thread.join()
+
+            if thread.is_alive():
+                logging.warning(f"A {thread.name} szál nem állt le biztonságosan.")
 
 if __name__ == '__main__':
     router_name = sys.argv[1]
@@ -488,4 +508,13 @@ if __name__ == '__main__':
     info_logger = InfoLogger(name= router_name, log_dir= INFO_LOG_DIR)
 
     ospf = OSPF(router_name, CONFIG_PATH, network_interface, info_logger)
-    ospf.start()
+
+    try:
+        ospf.start()
+        while True:
+            sleep(0.5)
+    except KeyboardInterrupt:
+        print('Leállítási parancsot kapott... (CTRL + C)')
+        ospf.stop()
+    finally:
+        print('Az OSPF futása leállt.')
