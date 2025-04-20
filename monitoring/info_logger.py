@@ -25,26 +25,30 @@ class InfoLogger:
 
         Beállítja a log fájlba írást és a router konzolára írás kezelőjét.
         """
+        log_path = f'{self._log_dir}/{self._name}.log'
+
         logger = logging.getLogger(self._name)
         logger.setLevel(logging.INFO)
 
         logger.handlers.clear()
 
-        log_path = f'{self._log_dir}/{self._name}.log'
-        file_handler = logging.FileHandler(log_path)
-        file_handler.setFormatter(logging.Formatter(
-            '[%(asctime)s] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        ))
-
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(logging.Formatter(
-            '[%(asctime)s] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            fmt=     '[%(asctime)s] %(message)s',
+            datefmt= '%Y-%m-%d %H:%M:%S'
         ))
-
-        logger.addHandler(file_handler)
         logger.addHandler(console_handler)
+
+        try:
+            file_handler = logging.FileHandler(log_path)
+            file_handler.setFormatter(logging.Formatter(
+                fmt=     '[%(asctime)s] %(message)s',
+                datefmt= '%Y-%m-%d %H:%M:%S'
+            ))
+            logger.addHandler(file_handler)
+        except Exception as e:
+            logging.warning(f"Nem sikerült a FileHandler hozzáadása: {e} "
+                            f"Csak a konzolban fognak az üzenetek megjelenni.")
 
         return logger
 
