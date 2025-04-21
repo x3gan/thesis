@@ -1,11 +1,8 @@
 from scapy.packet import Packet
 from scapy.sendrecv import sendp, sniff
 
-import utils
-from abstract_interface import AbstractInterface
 
-
-class Interface(AbstractInterface):
+class ScapyInterface():
     def send(self, packet, interface : str) -> None:
         """
         Csomag küldése az adott interfészen

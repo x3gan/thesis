@@ -18,7 +18,7 @@ from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd
 from lsdb import LSDB
 from state import State
 from neighbour import Neighbour
-from interface import Interface
+from scapy_interface import ScapyInterface
 from monitoring.info_logger import InfoLogger
 from monitoring.pcap_logger import PcapLogger
 
@@ -61,7 +61,8 @@ def get_device_interfaces_w_mac(router_name : str, interfaces : list) -> dict:
 
 class OSPF:
 
-    def __init__(self, name : str, config_path : str, interface : Interface, info_logger: InfoLogger) -> None:
+    def __init__(self, name : str, config_path : str, interface : ScapyInterface, info_logger:
+    InfoLogger) -> None:
         """
         OSPF router inicializálása.
         :param name: A router neve, ahogyan a hálózatban szerepel
@@ -504,7 +505,7 @@ class OSPF:
 
 if __name__ == '__main__':
     router_name = sys.argv[1]
-    network_interface = Interface()
+    network_interface = ScapyInterface()
     info_logger = InfoLogger(name= router_name, log_dir= INFO_LOG_DIR)
 
     ospf = OSPF(router_name, CONFIG_PATH, network_interface, info_logger)
