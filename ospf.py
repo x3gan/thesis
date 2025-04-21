@@ -69,7 +69,7 @@ class OSPF:
         """
         self.router_name = name
 
-        config = get_config(config_path)['routers'][router_name]
+        config = get_config(config_path)['routers'][self.router_name]
 
         self.rid        = config['rid']
         self.areaid     = config['area']

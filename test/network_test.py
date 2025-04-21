@@ -1,9 +1,16 @@
+from yaml import safe_load
+
 from topology import Topology
 
+def get_test_config(filepath):
+    with open(filepath, 'r') as file:
+        config = safe_load(file)
+
+    return config
 
 def test_empty_topology():
     """Teszt 1: Ha megvannak a szükséges paraméterek, betölti a konfigurációt."""
-    test_empty_config = {'routers' : {}}
+    test_empty_config = get_test_config('config/network_test1.yml')
 
     test_topology = Topology(config= test_empty_config)
 
@@ -12,32 +19,7 @@ def test_empty_topology():
 
 def test_config_topology():
     """Teszt 2: A konfigurációs fájl alapján a topológiába kerülnek a routerek és a linkek."""
-    test_router_config = {
-        'routers': {
-            'R1': {
-                'rid': '1.1.1.1',
-                'area': '0.0.0.0',
-                'interfaces': [
-                    {
-                        'name': 'eth0',
-                        'ip': '10.0.0.1',
-                        'neighbours': ['R2']
-                    }
-                ]
-            },
-            'R2': {
-                'rid': '2.2.2.2',
-                'area': '0.0.0.0',
-                'interfaces': [
-                    {
-                        'name': 'eth0',
-                        'ip': '10.0.0.3',
-                        'neighbours': ['R1']
-                    }
-                ]
-            }
-        }
-    }
+    test_router_config = get_test_config('config/network_test2.yml')
 
     test_topology = Topology(config= test_router_config)
 
@@ -57,4 +39,5 @@ def test_router_network_manager():
 
 
 def test_ospf_start():
+    """Teszt 5: """
     assert True
