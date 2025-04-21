@@ -1,0 +1,7 @@
+routers:
+  RT:
+    rid: 1.1.1.1
+    area: 0.0.0.0
+    interfaces:
+      - name: eth0
+        ip: 10.0.0.1
