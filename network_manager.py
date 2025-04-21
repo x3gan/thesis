@@ -1,3 +1,4 @@
+import logging
 import sys
 
 from mininet.cli import CLI
@@ -14,9 +15,14 @@ class NetworkManager:
     def __init__(self) -> None:
         self._config      = get_config(CONFIG_PATH)
         self._topology    = Topology(self._config)
-        self._network     = Mininet(
-            topo= self._topology
-        )
+        try:
+            self._network     = Mininet(
+                topo= self._topology
+            )
+        except Exception:
+            logging.error(" Már fut másik Mininet folyamat: Futtasd a 'sudo mn -c' parancsot, "
+                          "hogy leállítsd a sikertelenül leállt folyamatot. ")
+
         self._log_monitor = LogMonitor(
             log_dir= 'logs'
         )

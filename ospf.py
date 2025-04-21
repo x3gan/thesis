@@ -45,11 +45,18 @@ def get_interface_mac(name):
     return mac
 
 
-def get_device_interfaces_w_mac(router_name : str, interfaces : list) -> dict:
+def get_interface_status(interface: str):
+    command_output = os.popen(f"ip -br addr show | grep {interface}").read().split()
+    status         = command_output[1]
+
+    return status == 'UP'
+
+
+def get_device_interfaces_w_mac(name : str, interfaces : list) -> dict:
     interface_info = {}
 
     for interface in interfaces:
-        interface_name = f"{router_name}-{interface['name']}"
+        interface_name = f"{name}-{interface['name']}"
 
         interface_info[interface_name] = {
             'mac': get_interface_mac(interface_name),
@@ -87,7 +94,6 @@ class OSPF:
         self._stop_event           = threading.Event()
         self._threads              = []
 
-        # Csinal egy logger-t, ami a router nevét tartalmazza
         self._info_logger       = info_logger.logger
         self._pcap_logger       = PcapLogger()
         self.network_interface  = interface
@@ -102,10 +108,11 @@ class OSPF:
         while not self._stop_event.is_set():
             hello_packet = self._create_hello_packet(intf)
 
-            self.network_interface.send(packet= hello_packet, interface= intf)
-            self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= hello_packet)
+            if get_interface_status(intf):
+                self.network_interface.send(packet= hello_packet, interface= intf)
+                self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= hello_packet)
 
-            self._info_logger.info(f" Hello csomag küldve {intf} interfészen")
+                self._info_logger.info(f" Hello csomag küldve {intf} interfészen")
 
             if self._stop_event.wait(timeout= HELLO_INTERVAL):
                 break
@@ -204,11 +211,12 @@ class OSPF:
         :return:
         """
         while not self._stop_event.is_set():
-            packet = self.network_interface.receive(interface= intf)
+            if get_interface_status(intf):
+                packet = self.network_interface.receive(interface= intf)
 
-            if packet and packet.haslayer(OSPF_Hdr):
-                self.packet_queue.put((intf, packet))
-                self._pcap_logger.write_pcap_file(f'{intf}', packet)
+                if packet and packet.haslayer(OSPF_Hdr):
+                    self.packet_queue.put((intf, packet))
+                    self._pcap_logger.write_pcap_file(f"{intf}", packet)
 
     def _process_packet(self) -> None:
         """
@@ -345,11 +353,11 @@ class OSPF:
                             lsalist = lsa_list
                         )
                 )
+                if get_interface_status(intf):
+                    self.network_interface.send(packet= lsu_packet, interface= intf)
+                    self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= lsu_packet)
 
-                self.network_interface.send(packet= lsu_packet, interface= intf)
-                self._pcap_logger.write_pcap_file(pcap_file= f'{intf}', packet= lsu_packet)
-
-                self._info_logger.info(f" LSUpdate csomag küldve {intf} interfészen")
+                    self._info_logger.info(f" LSUpdate csomag küldve {intf} interfészen")
 
     def _is_down(self, intf: str) -> None:
         while not self._stop_event.is_set():
@@ -515,7 +523,7 @@ if __name__ == '__main__':
         while True:
             sleep(0.5)
     except KeyboardInterrupt:
-        print('Leállítási parancsot kapott... (CTRL + C)')
+        print("\nLeállítási parancsot kapott... (CTRL + C)")
         ospf.stop()
     finally:
-        print('Az OSPF futása leállt.')
+        print("Az OSPF futása leállt.")
