@@ -6,7 +6,6 @@ import threading
 import networkx as nx
 
 from time import sleep
-from yaml import safe_load
 from datetime import timedelta as td
 from datetime import datetime as dt
 
@@ -21,6 +20,7 @@ from neighbour import Neighbour
 from scapy_interface import ScapyInterface
 from monitoring.info_logger import InfoLogger
 from monitoring.pcap_logger import PcapLogger
+from common.utils import get_config
 
 
 MULTICAST_IP = '224.0.0.5'
@@ -33,19 +33,23 @@ HELLO_INTERVAL = 10
 CONFIG_PATH = 'config/router.yml'
 INFO_LOG_DIR = 'logs'
 
-def get_config(filepath):
-    with open(filepath, 'r') as file:
-        config = safe_load(file)
-
-    return config
-
 
 def get_interface_mac(name):
     mac = os.popen(f"cat /sys/class/net/{name}/address").read().strip()
     return mac
 
 
-def get_interface_status(interface: str):
+def get_interface_status(interface: str) -> bool:
+    """Visszaadja az interfész állapotát
+    Az aktuális router termináljában futtatja a parancsot és lekéri az interfészeiről az
+    információt. Majd visszaadja a paraméterként kapott interfésznek mi az aktuális állapota.
+
+    Paraméterek:
+    interface (str) : A router azon interfészének neve aminek az állapotára kiváncsiak vagyunk.
+
+    Visszatérési érték:
+    status (bool) : True-t ad vissza, ha a kért interfész UP állapotban van
+    """
     command_output = os.popen(f"ip -br addr show | grep {interface}").read().split()
     status         = command_output[1]
 
@@ -67,14 +71,29 @@ def get_device_interfaces_w_mac(name : str, interfaces : list) -> dict:
 
 
 class OSPF:
+    """ A routereken futó OSPF algoritmus logikája.
+    Kezeli a különböző hálózati csomagok küldését, fogadását és feldolgozását. Eltárolja a
+    szomszédokkal való kapcsolat aktuális állapotát és figyeli azok változásait. Figyeli ha
+    változás történik a topológiában (eltűnik kapcsolat vagy megjelenik új) és értesíti róla
+    szomszédait.
 
+    Attribútumok:
+    _router_name (str) : A router neve, ahogy a hálózatban megtalálható
+    _rid (str) : A router egyedi azonosítója, ezen a néven terjeszti a csomagokat
+    _areaid (str) : A hálózati terület azonosítója, fontos szerepet játszik a beérkező csomagok
+    validációjában
+    _interfaces (dict) : A router interfészeinek neve, IP címe és MAC címe
+    _lsdb (LSDB) : A router legalább FULL állapotban lévő szomszédainak adatait tárolja
+    _packet_queue (queue.Queue) : A beérkező hálózati csomagok feldolgozási sora
+    _neighbour_states (dict) : A szomszédról tárol adatot a megismerése pillanatától fogva
+    _routing_table (dict) : Az SPF algoritmus által kiszámolt routing adatokat tárolja
+    _neigbhour_states_Lock (threading.Lock) : A _neighbour_states szótár zárolására
+    _lsa_sequence_number (int) : Számon tarja a router által generált LSA-k szekvencia számát,
+    hogy el lehessen dönteni melyik a 'legfrissebb'
+
+    """
     def __init__(self, name : str, config_path : str, interface : ScapyInterface, info_logger:
     InfoLogger) -> None:
-        """
-        OSPF router inicializálása.
-        :param name: A router neve, ahogyan a hálózatban szerepel
-        :param config_path: Az OSPF konfiguráció elérési útja
-        """
         self.router_name = name
 
         config = get_config(config_path)['routers'][self.router_name]
@@ -100,9 +119,13 @@ class OSPF:
         self.topology           = nx.Graph()
 
     def _send_hello(self, intf : str) -> None:
-        """
-        OSPF Hello csomag küldése multicast címen.
-        :param intf: Az az interfész, amelyik küldi a csomagot
+        """OSPF Hello csomag küldése multicast címen
+        Amíg nem kap interrupt jelzést, HELLO_INTERVAL (10 mp) időközönként küldi a Hello
+        csomagot a multicast címre, hogy mindenki hallja, hogy él és jelezze, hogy mely routerek
+        a szomszédai. Ezzel a csomagküldéssel keresi az új szomszédokat.
+
+        Paraméterek:
+        intf (str) : Az az interfész, amelyiken kiküldi a csomagot
         :return:
         """
         while not self._stop_event.is_set():
@@ -472,14 +495,18 @@ class OSPF:
             return
 
     def _show_topology(self) -> None:
+        """Topológia megjelenítése
+        Az eltárolt topológiai információkat átadja az InfoLogger-nek, hogy a terminálban
+        megjeleníthető legyen.
+        """
         for line in nx.generate_network_text(self.topology):
             self._info_logger.info(line)
 
-    def check_timeout(self) -> None:
-        if self.lsdb.get_all() and self.last_lsa_update + td(seconds=TIMEOUT) < dt.now():
-            self.is_simulation_done = True
-
     def start(self) -> None:
+        """Elindítja az OSPF folyamatot.
+        Tisztítja a hálózati csomagok log fájljait és visszaállítja a leállítási event flag-et.
+        Létrehozza a szükséges threadeket és az azokon futó folyamatokat, majd elindítja azokat.
+        """
         self._pcap_logger.cleanup(self.router_name, log_dir= 'packet_logs')
         self._stop_event.clear()
 
@@ -512,9 +539,9 @@ class OSPF:
                 logging.warning(f"A {thread.name} szál nem állt le biztonságosan.")
 
 if __name__ == '__main__':
-    router_name = sys.argv[1]
+    router_name       = sys.argv[1]
+    info_logger       = InfoLogger(name= router_name, log_dir= INFO_LOG_DIR)
     network_interface = ScapyInterface()
-    info_logger = InfoLogger(name= router_name, log_dir= INFO_LOG_DIR)
 
     ospf = OSPF(router_name, CONFIG_PATH, network_interface, info_logger)
 

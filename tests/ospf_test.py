@@ -7,11 +7,11 @@ from ospf import OSPF
 
 
 def test_ospf_initialization():
-    """Teszt 1: """
+    """Teszt 1: Létrejön az OSPF-et kezelő osztály a konfigurációs fájl alapján"""
     mock_interface = Mock()
     mock_logger = Mock()
 
-    mock_ospf = OSPF('RT', 'config/ospf_test1.yml', interface= mock_interface, info_logger= mock_logger)
+    mock_ospf = OSPF('RT', 'tests/config/ospf_test1.yml', interface= mock_interface, info_logger= mock_logger)
     assert mock_ospf.rid == '1.1.1.1'
 
 def test_hello_packet_sending():
