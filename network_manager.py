@@ -6,7 +6,7 @@ from mininet.net import Mininet
 
 from monitoring.log_monitor import LogMonitor
 from topology import Topology
-from utils import get_config
+from common.utils import get_config
 
 CONFIG_PATH = 'config/router.yml'
 
@@ -34,7 +34,6 @@ class NetworkManager:
         mode (str): Az elindítás módja.
             manual: Az OSPF algoritmust manuálisan kell a routerek termináljában elindítani.
             auto: Az algoritmus elindul magától, csak a kimenetet kell figyelni.
-            test: A programhoz tartozó tesztek futtatása.
         """
         try:
             self._network.start()
