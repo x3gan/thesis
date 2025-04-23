@@ -1,4 +1,4 @@
-from state import State
+from ospf_core.state import State
 
 
 class Neighbour:
@@ -7,7 +7,7 @@ class Neighbour:
         self.ip = None
         self.mac = None
         self.last_seen = None
-        self.state = 'DOWN'
+        self.state = State.DOWN
 
     def build(self, rid = None, ip = None, mac = None, last_seen = None, state = State.DOWN):
         if rid is not None:

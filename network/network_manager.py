@@ -1,11 +1,12 @@
 import logging
+import os
 import sys
 
 from mininet.cli import CLI
 from mininet.net import Mininet
 
 from monitoring.log_monitor import LogMonitor
-from topology import Topology
+from .topology import Topology
 from common.utils import get_config
 
 CONFIG_PATH = 'config/router.yml'
@@ -24,7 +25,7 @@ class NetworkManager:
                           "hogy leállítsd a sikertelenül leállt folyamatot. ")
 
         self._log_monitor = LogMonitor(
-            log_dir= 'logs'
+            log_dir='logs'
         )
 
     def run(self, mode : str = 'manual') -> None:
@@ -57,7 +58,7 @@ class NetworkManager:
     def _start_ospf(self) -> None:
         """Elindítja az OSPF kódját a routereken."""
         for router in self._network.hosts:
-            router.cmd(f"sudo python3 ospf.py {router.name} &")
+            router.cmd(f"sudo PYTHONPATH={os.getcwd()} python3 -m ospf_core.ospf {router.name} &")
 
     def _configure_interfaces(self) -> None:
         """Konfigurálja a hálózati eszközök interfészeit."""
@@ -67,9 +68,3 @@ class NetworkManager:
                     interface_name = f"{router.name}-{interface['name']}"
 
                     router.setIP(interface['ip'], intf= interface_name)
-
-if __name__ == '__main__':
-    mode = sys.argv[1]
-
-    network_manager = NetworkManager()
-    network_manager.run(mode)
