@@ -1,9 +1,6 @@
 from unittest.mock import Mock
 
-import pytest
-from yaml import safe_load
-
-from ospf import OSPF
+from ospf_core.ospf import OSPF
 
 
 def test_ospf_initialization():
