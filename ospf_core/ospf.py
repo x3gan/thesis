@@ -148,7 +148,9 @@ class OSPF:
         self.lsa_sequence_number   = 0
         self.last_lsa_update       = dt.now()
         self._stop_event           = threading.Event()
-        self._threads              = []
+        self._threads              = {}
+        self._intf_monitor_thread  = None
+        self._process_thread       = None
         self.is_running            = False
 
         self._info_logger       = info_logger.logger
@@ -581,92 +583,94 @@ class OSPF:
     # ----------------------------------------------
     # Életciklus kezelése (indítás és megállítás)
     # ----------------------------------------------
+    def _intf_monitor(self):
+        while not self._stop_event.is_set():
+            for intf in self.interfaces:
+                state = get_interface_status(intf)
+
+                if state and intf not in self._threads:
+                    self._start_ospf_threads(intf= intf)
+
+                if not state and intf in self._threads:
+                    self._stop_ospf_threads(intf= intf)
+
+            time.sleep(5)
+
+
+    def _start_ospf_threads(self, intf : str):
+        if intf in self._threads or not get_interface_status(intf):
+            return
+
+        self._threads[intf] = {
+            'hello'   : threading.Thread(target= self._send_hello, args= (intf,),
+                                              name= f"HelloThread-{intf}"),
+            'listen'  : threading.Thread(target= self._listen, args= (intf,),
+                                              name= f"ListenerThread-{intf}"),
+            'down'    : threading.Thread(target= self._is_down, args= (intf,),
+                                              name= f"DownThread-{intf}"),
+            'state'   : threading.Thread(target= self._state_watch, args= (intf,),
+                                              name= f"StateWatchThread-{intf}")
+        }
+
+        for thread in self._threads[intf].values():
+            try:
+                thread.start()
+            except Exception as e:
+                self._info_logger.error(f"Hiba a {thread.name} szal elinditasa kozben: {str(e)}")
+
 
     def start(self) -> None:
         """Elindítja az OSPF folyamatot.
         Tisztítja a hálózati csomagok log fájljait és visszaállítja a leállítási event flag-et.
         Létrehozza a szükséges threadeket és az azokon futó folyamatokat, majd elindítja azokat.
         """
-        self._pcap_logger.cleanup(self.router_name, log_dir='../packet_logs')
+        self._pcap_logger.cleanup(self.router_name, log_dir='packet_logs')
         self._stop_event.clear()
         self._threads.clear()
 
-        up_interfaces = []
-
         for interface in self.interfaces:
             if get_interface_status(interface):
-                up_interfaces.append(interface)
-            else:
-                if try_to_wake_up_intf(interface):
-                    up_interfaces.append(interface)
+                self._start_ospf_threads(interface)
 
-        if not up_interfaces:
-            logging.warning("Nincs elérhető interfész. Indítás újrapróbálása...")
-            self._retry_start()
+        self._intf_monitor_thread = threading.Thread(target= self._intf_monitor,
+                                                     name= 'InterfaceMonitorThread')
+        self._intf_monitor_thread.start()
+
+        self._process_thread      = threading.Thread(target= self._process_packet,
+                                          name= 'PacketProcessorThread')
+        self._process_thread.start()
+
+        self.is_running = True
+        self._info_logger.info("Az OSPF elindult.")
+
+    def _stop_ospf_threads(self, intf : str):
+        if intf not in self._threads:
             return
 
-        for interface in up_interfaces:
-            hello_thread       = threading.Thread(target= self._send_hello, args= (interface,),
-                                                  name= 'HelloThread')
-            listening_thread   = threading.Thread(target= self._listen, args= (interface,),
-                                                  name= 'ListenerThread')
-            is_down_thread     = threading.Thread(target= self._is_down, args= (interface,),
-                                                  name= 'DownThread')
-            state_watch_thread = threading.Thread(target= self._state_watch, args= (interface,),
-                                                  name= 'StateWatchThread')
+        for thread in self._threads[intf].values():
+            if thread.is_alive():
+                thread.join(timeout= 2.0)
 
-            self._threads.extend([
-                hello_thread,
-                listening_thread,
-                is_down_thread,
-                state_watch_thread
-            ])
-
-        process_thread = threading.Thread(target= self._process_packet,
-                                          name= 'PacketProcessorThread')
-        self._threads.append(process_thread)
-
-        try:
-            for thread in self._threads:
-                thread.start()
-                time.sleep(0.05)
-
-            self.is_running = True
-            self._info_logger.info("Az OSPF elindult.")
-        except Exception as e:
-            self._info_logger.error(f"Hiba tortent az inditas kozben: {str(e)}")
-            self.stop()
-
-    def _retry_start(self):
-        number_of_retries = 0
-
-        time.sleep(5)
-
-        while number_of_retries < MAX_RETRIES and not self._stop_event.is_set():
-            logging.warning(f"Újrapróbálkozások száma: {number_of_retries}/{MAX_RETRIES}.")
-
-            if any(get_interface_status(intf) or try_to_wake_up_intf(intf) for intf in self.interfaces):
-                logging.warning("Elerheto interfesz eszlelve, ujrainditas...")
-                self.start()
-
-            number_of_retries += 1
-
-        logging.error("Nem talalhato elerheto interfesz. Leallas...")
-        self.stop()
-
+        del self._threads[intf]
+        self._info_logger.info(f"Az {intf} leallitotta az  OSPF-et.")
 
     def stop(self) -> None:
         self._stop_event.set()
 
-        for thread in self._threads:
-            try:
-                if thread.is_alive():
-                    thread.join(timeout= 2.0)
+        try:
+            self._intf_monitor_thread.join(timeout= 2.0)
+        except Exception as e:
+            self._info_logger.error(f"Hiba a {self._intf_monitor_thread.name} szal leallitasa kozben: "
+                                    f"{str(e)}")
 
-                if thread.is_alive():
-                    logging.warning(f"A {thread.name} szál nem állt le biztonságosan.")
-            except Exception as e:
-                logging.error(f"Hiba a {thread.name} szal leallasa kozben: {str(e)}")
+        for intf in list(self._threads.keys()):
+            self._stop_ospf_threads(intf)
+
+        try:
+            self._process_thread.join(timeout= 2.0)
+        except Exception as e:
+            self._info_logger.error(f"Hiba a {self._process_thread.name} szal leallitasa kozben: "
+                                    f"{str(e)}")
 
         self.is_running = False
 
