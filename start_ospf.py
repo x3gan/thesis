@@ -6,28 +6,27 @@ from network.scapy_interface import ScapyInterface
 from ospf_core.ospf import OSPF
 
 
-CONFIG_PATH = 'config/router.yml'
+CONFIG_PATH  = 'config/router.yml'
 INFO_LOG_DIR = 'logs'
 
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print("Usage: python start_ospf.py <router_name>")
+        print("Hasznalat: sudo python3 start_ospf.py <router_neve>")
         sys.exit(1)
 
-    router_name = sys.argv[1]
-    info_logger = InfoLogger(name=router_name, log_dir=INFO_LOG_DIR)
+    router_name       = sys.argv[1]
+    info_logger       = InfoLogger(name=router_name, log_dir=INFO_LOG_DIR)
     network_interface = ScapyInterface()
 
     ospf = OSPF(router_name, CONFIG_PATH, network_interface, info_logger)
 
     try:
-        print(f"Starting OSPF on {router_name}... (Press Ctrl+C to stop)")
         ospf.start()
-        while True:
-            sleep(0.1)  # CPU terhelés csökkentése
+        while ospf.is_running:
+            sleep(0.5)
     except KeyboardInterrupt:
-        print("\nStopping OSPF...")
-    finally:
+        print("\nLeállítási parancsot kapott... (CTRL + C)")
         ospf.stop()
-        print("OSPF stopped.")
+    finally:
+        print("Az OSPF futása leállt.")

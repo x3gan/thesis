@@ -3,6 +3,8 @@ import sys
 import queue
 import logging
 import threading
+import time
+
 import networkx as nx
 
 from time import sleep
@@ -29,9 +31,9 @@ from common.utils import get_config
 MULTICAST_IP = '224.0.0.5'
 MULTICAST_MAC = '01:00:5e:00:00:05'
 
-TIMEOUT        = 10
 DEAD_INTERVAL  = 40
 HELLO_INTERVAL = 10
+MAX_RETRIES    = 5
 
 CONFIG_PATH = 'config/router.yml'
 INFO_LOG_DIR = 'logs'
@@ -41,7 +43,17 @@ INFO_LOG_DIR = 'logs'
 # Segédfüggvények
 # ---------------------------------------
 
-def get_interface_mac(name):
+def get_interface_mac(name : str) -> str:
+    """Kiolvassuk az interfész információkat.
+    A virtuális rendszerfájlból kiolvassuk a hálózati interfész MAC címét, letisztítjuk,
+    majd visszaadjuk.
+
+    Parameterek:
+        name (str) : Az interfész neve.
+
+    Visszatérési érték:
+        mac (str) : Az interfész kiolvasott MAC címe.
+    """
     mac = os.popen(f"cat /sys/class/net/{name}/address").read().strip()
     return mac
 
@@ -52,15 +64,19 @@ def get_interface_status(interface: str) -> bool:
     információt. Majd visszaadja a paraméterként kapott interfésznek mi az aktuális állapota.
 
     Paraméterek:
-    interface (str) : A router azon interfészének neve aminek az állapotára kiváncsiak vagyunk.
+        interface (str) : A router azon interfészének neve aminek az állapotára kiváncsiak vagyunk.
 
     Visszatérési érték:
-    status (bool) : True-t ad vissza, ha a kért interfész UP állapotban van
+        status (bool) : True-t ad vissza, ha a kért interfész UP állapotban van
     """
-    command_output = os.popen(f"ip -br addr show | grep {interface}").read().split()
-    status         = command_output[1]
-
-    return status == 'UP'
+    status = False
+    try:
+        with open(f'/sys/class/net/{interface}/operstate') as f:
+            if 'up' in f.read().lower():
+                status = True
+            return status
+    except:
+        return False
 
 
 def get_device_interfaces_w_mac(name : str, interfaces : list) -> dict:
@@ -75,6 +91,22 @@ def get_device_interfaces_w_mac(name : str, interfaces : list) -> dict:
         }
 
     return interface_info
+
+def try_to_wake_up_intf(intf : str):
+    up = False
+
+    try:
+        os.system(f"ip link set dev {intf} up 2>/dev/null")
+
+        time.sleep(0.5)
+
+        if get_interface_status(intf):
+            up = True
+
+        return up
+    except Exception as e:
+        ospf._info_logger.error(f"Hiba az interfesz aktivalasa kozben: {str(e)}")
+        return False
 
 
 class OSPF:
@@ -116,7 +148,10 @@ class OSPF:
         self.lsa_sequence_number   = 0
         self.last_lsa_update       = dt.now()
         self._stop_event           = threading.Event()
-        self._threads              = []
+        self._threads              = {}
+        self._intf_monitor_thread  = None
+        self._process_thread       = None
+        self.is_running            = False
 
         self._info_logger       = info_logger.logger
         self._pcap_logger       = PcapLogger()
@@ -128,10 +163,11 @@ class OSPF:
     # ----------------------------------------------
 
     def _listen(self, intf : str) -> None:
-        """
+        """Hallgatja az interfészt az OSPF csomagokért.
         Az adott interfész figyel, és ha kap egy csomagot, akkor azt belerakja a packet queue-ba.
-        :param intf: Az az interfész, amelyik figyeli a csomagokat
-        :return:
+
+        Paraméterek:
+            intf (str) : Az az interfész, amelyiken figyeljuk a hálózati csomagokat.
         """
         while not self._stop_event.is_set():
             if get_interface_status(intf):
@@ -373,7 +409,7 @@ class OSPF:
     # Szomszédok állapotának kezelése
     # ----------------------------------------------
 
-    def _is_down(self, intf: str) -> None:
+    def _is_down(self, intf : str) -> None:
         while not self._stop_event.is_set():
             with self.neighbour_states_lock:
                 for neighbour in list(self.neighbour_states[intf]):
@@ -386,7 +422,7 @@ class OSPF:
             if self._stop_event.wait(timeout= DEAD_INTERVAL):
                 break
 
-    def _state_watch(self, intf: str) -> None:
+    def _state_watch(self, intf : str) -> None:
         """
         Interfészenként megnézzük a szomszédok állapotát és frissítjük azt.
         :param intf: Az aktuális router azon interfésze, amelyiket nézzük
@@ -547,57 +583,113 @@ class OSPF:
     # ----------------------------------------------
     # Életciklus kezelése (indítás és megállítás)
     # ----------------------------------------------
+    def _intf_monitor(self):
+        while not self._stop_event.is_set():
+            for intf in self.interfaces:
+                state = get_interface_status(intf)
+
+                if state and intf not in self._threads:
+                    self._start_ospf_threads(intf= intf)
+
+                if not state and intf in self._threads:
+                    self._stop_ospf_threads(intf= intf)
+
+            time.sleep(5)
+
+
+    def _start_ospf_threads(self, intf : str):
+        if intf in self._threads or not get_interface_status(intf):
+            return
+
+        self._threads[intf] = {
+            'hello'   : threading.Thread(target= self._send_hello, args= (intf,),
+                                              name= f"HelloThread-{intf}"),
+            'listen'  : threading.Thread(target= self._listen, args= (intf,),
+                                              name= f"ListenerThread-{intf}"),
+            'down'    : threading.Thread(target= self._is_down, args= (intf,),
+                                              name= f"DownThread-{intf}"),
+            'state'   : threading.Thread(target= self._state_watch, args= (intf,),
+                                              name= f"StateWatchThread-{intf}")
+        }
+
+        for thread in self._threads[intf].values():
+            try:
+                thread.start()
+            except Exception as e:
+                self._info_logger.error(f"Hiba a {thread.name} szal elinditasa kozben: {str(e)}")
+
 
     def start(self) -> None:
         """Elindítja az OSPF folyamatot.
         Tisztítja a hálózati csomagok log fájljait és visszaállítja a leállítási event flag-et.
         Létrehozza a szükséges threadeket és az azokon futó folyamatokat, majd elindítja azokat.
         """
-        self._pcap_logger.cleanup(self.router_name, log_dir='../packet_logs')
+        self._pcap_logger.cleanup(self.router_name, log_dir='packet_logs')
         self._stop_event.clear()
+        self._threads.clear()
 
         for interface in self.interfaces:
-            hello_thread       = threading.Thread(target= self._send_hello, args= (interface,))
-            listening_thread   = threading.Thread(target= self._listen, args= (interface,))
-            is_down_thread     = threading.Thread(target= self._is_down, args= (interface,))
-            state_watch_thread = threading.Thread(target= self._state_watch, args= (interface,))
+            if get_interface_status(interface):
+                self._start_ospf_threads(interface)
 
-            self._threads.extend([
-                hello_thread,
-                listening_thread,
-                is_down_thread,
-                state_watch_thread
-            ])
+        self._intf_monitor_thread = threading.Thread(target= self._intf_monitor,
+                                                     name= 'InterfaceMonitorThread')
+        self._intf_monitor_thread.start()
 
-        process_thread = threading.Thread(target= self._process_packet)
-        self._threads.append(process_thread)
+        self._process_thread      = threading.Thread(target= self._process_packet,
+                                          name= 'PacketProcessorThread')
+        self._process_thread.start()
 
-        for thread in self._threads:
-            thread.start()
+        self.is_running = True
+        self._info_logger.info("Az OSPF elindult.")
+
+    def _stop_ospf_threads(self, intf : str):
+        if intf not in self._threads:
+            return
+
+        for thread in self._threads[intf].values():
+            if thread.is_alive():
+                thread.join(timeout= 2.0)
+
+        del self._threads[intf]
+        self._info_logger.info(f"Az {intf} leallitotta az  OSPF-et.")
 
     def stop(self) -> None:
         self._stop_event.set()
 
-        for thread in self._threads:
-            thread.join()
+        try:
+            self._intf_monitor_thread.join(timeout= 2.0)
+        except Exception as e:
+            self._info_logger.error(f"Hiba a {self._intf_monitor_thread.name} szal leallitasa kozben: "
+                                    f"{str(e)}")
 
-            if thread.is_alive():
-                logging.warning(f"A {thread.name} szál nem állt le biztonságosan.")
+        for intf in list(self._threads.keys()):
+            self._stop_ospf_threads(intf)
+
+        try:
+            self._process_thread.join(timeout= 2.0)
+        except Exception as e:
+            self._info_logger.error(f"Hiba a {self._process_thread.name} szal leallitasa kozben: "
+                                    f"{str(e)}")
+
+        self.is_running = False
 
 
 if __name__ == '__main__':
     router_name       = sys.argv[1]
     info_logger       = InfoLogger(name= router_name, log_dir= INFO_LOG_DIR)
-    network_interface = ScapyInterface()
+    scapy_interface   = ScapyInterface()
 
-    ospf = OSPF(router_name, CONFIG_PATH, network_interface, info_logger)
+    ospf = OSPF(router_name, CONFIG_PATH, scapy_interface, info_logger)
 
     try:
         ospf.start()
-        while True:
+        while ospf.is_running:
             sleep(0.5)
     except KeyboardInterrupt:
         print("\nLeállítási parancsot kapott... (CTRL + C)")
-        ospf.stop()
+    except Exception as e:
+        info_logger.logger.error(f"Varatlan hiba: {str(e)}")
     finally:
+        ospf.stop()
         print("Az OSPF futása leállt.")
