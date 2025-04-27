@@ -1,43 +1,46 @@
 import logging
 from pathlib import Path
 
+from scapy.packet import Packet
 from scapy.utils import PcapWriter
 
 class PcapLogger:
+    """PCAP fájlok kezelésére szolgáló osztály.
+    
+    Az osztály felelős a hálózati csomagok mentéséért és a PCAP fájlok kezeléséért.
+    Lehetővé teszi a csomagok rögzítését PCAP formátumban, valamint a régi naplófájlok törlését.
 
-    def write_pcap_file(self, pcap_file, packet):
-        """A kuldott/elfogott csomagok kiirasa a pcap fileba
+    Attribútumok:
+        log_dir (str): A PCAP fájlok könyvtárának elérési útja.
+    """
 
-        Parameters:
-        pcap_file (str): A fájlnak a neve ahova a csomagot bejegyezzuk (nem kell a .pcap)
-        packet (Packet): A csomag amit bejegyzunk a pcap fájlba
+    def __init__(self, log_dir: str = 'packet_logs'):
+        self._log_dir = Path(log_dir)
+        self._log_dir.mkdir(exist_ok=True)
+
+    def write_pcap_file(self, pcap_file: str, packet: Packet) -> None:
+        """Hálózati csomagot ír a megadott PCAP fájlba (append módban).
+
+        Paraméterek:
+            pcap_file (str): A célfájl neve (kiterjesztés nélkül, pl. "R1_eth0").
+            packet (Packet): A rögzítendő Scapy csomag.
         """
-        file_path = f'packet_logs/{pcap_file}.pcap'
-
+        file_path = self._log_dir / f"{pcap_file}.pcap"  # Path használata
         try:
-            pcap_writer = PcapWriter(file_path, append= True, sync= True)
-            pcap_writer.write(packet)
+            with PcapWriter(str(file_path), append=True, sync=True) as pcap_writer:
+                pcap_writer.write(packet)
         except Exception as e:
-            print(f"Hiba történt a hálózati csomag bejegyzése közben: {e}")
+            logging.error(f"PCAP írási hiba: {e}")
 
-    def cleanup(self, name: str, log_dir: str = 'packet_logs') -> None:
+    def cleanup(self, name: str) -> None:
+        """Törli a megadott mappából a routerhez tartozó PCAP fájlokat.
+        
+        Paraméterek:
+            name (str): A router neve, csak az ehhez tartozó fájlokat törli
+            log_dir (str): A mappa elérési útja, ahonnan törölni kell a fájlokat
         """
-        Törli a log és packet_logs mappák tartalmát, kivéve az ignore listán lévő fájlokat
-        :return
-        """
-        folder = log_dir
         ignored_files = {'README.md', '__init__.py', '.gitkeep'}
 
-        try:
-
-            folder_path = Path(folder)
-            folder_path.mkdir(exist_ok=True)
-
-            for item in folder_path.iterdir():
-                if item.is_file() and item.name not in ignored_files and name in item.name:
-                    try:
-                        item.unlink()
-                    except (PermissionError, FileNotFoundError):
-                        logging.error(f"Nem lehetett törölni a fájlt: {item}")
-        except FileNotFoundError:
-            logging.error(f"A mappa nem található: {folder}")
+        for item in self._log_dir.iterdir():
+            if item.is_file() and item.name not in ignored_files and name in item.name:
+                item.unlink(missing_ok= True)
