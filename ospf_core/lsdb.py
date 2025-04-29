@@ -56,6 +56,8 @@ class LSDB:
 
         Visszatérési érték:
             packets (list): Az összes LSA csomag listája
+
+        TODO: típus szerint
         """
         packets = []
 

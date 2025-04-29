@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from time import sleep
 
 from mininet.cli import CLI
 from mininet.net import Mininet
@@ -27,6 +28,7 @@ class NetworkManager:
     def __init__(self) -> None:
         self._config      = get_config(CONFIG_PATH)
         self._topology    = Topology(self._config)
+        self._is_running  = False
         try:
             self._network     = Mininet(
                 topo= self._topology
@@ -39,7 +41,7 @@ class NetworkManager:
             log_dir='logs'
         )
 
-    def run(self, mode: str = 'auto') -> None:
+    def run(self, mode: str) -> None:
         """Elindítja a hálózatot és az OSPF algoritmust minden routeren.
 
         Elindítja a Mininet hálózati példányt és a megadott módtól függően elindítja az  OSPF
@@ -53,16 +55,24 @@ class NetworkManager:
             self._configure_interfaces()
             print("***** A hálózat elindult. *****")
 
-            if mode == 'auto':
-                self._start_ospf()
-
             self._log_monitor.start()
             print("***** A LogMonitor elindult. *****")
 
-            CLI(self._network)
+            if mode == 'auto':
+                self._start_ospf()
+            else:
+                CLI(self._network)
+
+            while self._is_running:
+                sleep(0.5)
         except KeyboardInterrupt:
+            self._log_monitor.stop()
+            if mode == 'auto':
+                CLI(self._network)
+
             print("\n***** Kilépés... *****")
         finally:
+            self._is_running = False
             self._log_monitor.stop()
             self._network.stop()
             print("***** A hálózat leállt. *****")
@@ -74,6 +84,8 @@ class NetworkManager:
         """
         for router in self._network.hosts:
             router.cmd(f"sudo PYTHONPATH={os.getcwd()} python3 -m ospf_core.ospf {router.name} &")
+
+        self._is_running = True
 
     def _configure_interfaces(self) -> None:
         """Konfigurálja a routerek interfészeit.
