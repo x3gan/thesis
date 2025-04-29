@@ -4,7 +4,7 @@ routers:
     area: 0.0.0.0
     interfaces:
       - name: eth0
-        ip': 10.0.0.1
+        ip: 10.0.0.1
         neighbours: [R2]
   R2:
     rid: 2.2.2.2

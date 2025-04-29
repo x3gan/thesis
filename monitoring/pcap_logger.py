@@ -1,4 +1,5 @@
 import logging
+import threading
 from pathlib import Path
 
 from scapy.packet import Packet
@@ -18,6 +19,8 @@ class PcapLogger:
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(exist_ok=True)
 
+        self._writer_lock = threading.Lock()
+
     def write_pcap_file(self, pcap_file: str, packet: Packet) -> None:
         """Hálózati csomagot ír a megadott PCAP fájlba (append módban).
 
@@ -27,8 +30,10 @@ class PcapLogger:
         """
         file_path = self._log_dir / f"{pcap_file}.pcap"  # Path használata
         try:
-            with PcapWriter(str(file_path), append=True, sync=True) as pcap_writer:
-                pcap_writer.write(packet)
+            with self._writer_lock:
+                with PcapWriter(str(file_path), append=True, sync=True) as pcap_writer:
+                    pcap_writer.write(packet)
+                    pcap_writer.flush()
         except Exception as e:
             logging.error(f"PCAP írási hiba: {e}")
 
