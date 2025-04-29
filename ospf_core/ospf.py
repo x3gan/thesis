@@ -1,5 +1,4 @@
 import os
-import random
 import sys
 import queue
 import logging
@@ -55,6 +54,7 @@ def get_interface_mac(name: str) -> str:
 
     Visszatérési érték:
         mac (str) : Az interfész kiolvasott MAC címe.
+    TODO: network/network_utils
 
     TODO: Error hadnling
     """
@@ -73,6 +73,8 @@ def get_interface_status(interface: str) -> bool:
 
     Visszatérési érték:
         status (bool) : True-t ad vissza, ha a kért interfész UP állapotban van.
+        TODO: network/network_utils
+
     """
     status = False
     try:
@@ -93,6 +95,7 @@ def get_device_interfaces_w_mac(name: str, interfaces: list) -> dict:
     Paraméterek:
         name (str): A router neve.
         interfaces (list): A router konfigurációjához megadott
+        TODO: network/network_utils
     """
     interface_info = {}
 
@@ -144,14 +147,14 @@ class OSPF:
     def __init__(self, name: str, config_path: str, interface: ScapyInterface, info_logger: InfoLogger) -> None:
         self.router_name = name
 
-        config = get_config(config_path)['routers'][self.router_name]
+        self._config = get_config(config_path)['routers'][self.router_name]
 
-        self.rid        = config['rid']
-        self.areaid     = config['area']
-        self.interfaces = get_device_interfaces_w_mac(self.router_name, config['interfaces'])
+        self.rid        = self._config['rid']
+        self.areaid     = self._config['area']
+        self.interfaces = get_device_interfaces_w_mac(self.router_name, self._config['interfaces'])
 
         self.lsdb             = LSDB()
-        self.packet_queue     = queue.Queue(maxsize=MAX_QUEUE_SIZE)
+        self.packet_queue     = queue.Queue(maxsize= MAX_QUEUE_SIZE)
         self._neighbour_table = {intf: [] for intf in self.interfaces}
         self.routing_table    = {}
         self.topology         = nx.Graph()
@@ -159,7 +162,7 @@ class OSPF:
         self._neighbour_table_global_lock = threading.RLock()
         self._neighbour_table_lock        = {intf: threading.RLock() for intf in self.interfaces}
         self.lsa_seq_number_lock          = threading.Lock()
-        self._interfaces_lock              = threading.Lock()
+        self._interfaces_lock             = threading.Lock()
         self._lsdb_lock                   = threading.RLock()
         self._routing_table_lock          = threading.RLock()
         self._topology_lock               = threading.RLock()
@@ -685,8 +688,9 @@ class OSPF:
                     continue
 
                 self.routing_table[target] = {
-                    'cost': distances[target],
-                    'next_hop': path[1]
+                    'destination' : target,
+                    'cost'        : distances[target],
+                    'next_hop'    : path[1]
                 }
 
                 self._info_logger.info(
@@ -696,6 +700,9 @@ class OSPF:
             logging.error(
                 f"Nincs elérhető útvonal a(z) {self.router_name} egyetlen szomszédjához sem.")
             return
+
+    def set_routing_table(self, routing_table: dict) -> None:
+        pass
 
     def _show_topology(self) -> None:
         """Topológia megjelenítése
@@ -730,7 +737,7 @@ class OSPF:
 
             time.sleep(5)
 
-    def _start_ospf_threads(self, intf: str):
+    def _start_ospf_threads(self, intf: str) -> None:
         """Elindítja az adott router OSPF folyamatait kezelő szálakat,"""
         if intf in self._threads or not get_interface_status(intf):
             return

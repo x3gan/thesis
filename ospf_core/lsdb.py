@@ -12,7 +12,7 @@ class LSDB:
         _lsa_db (dict): A szótár az LSA-kat tárolja LSA típus és a szomszéd RID-ja alapján.
     """
     def __init__(self) -> None:
-        self.lsa_db : dict[int, dict[str, Packet]] = {}
+        self._lsa_db : dict[int, dict[str, Packet]] = {}
 
     def add(self, lsa: Packet) -> None:
         """Új LSA-k hozzáadása az adatbázishoz.
@@ -28,10 +28,10 @@ class LSDB:
 
         key = lsa_adrouter
 
-        if lsa_type not in self.lsa_db:
-            self.lsa_db[lsa_type] = {}
+        if lsa_type not in self._lsa_db:
+            self._lsa_db[lsa_type] = {}
 
-        self.lsa_db[lsa_type][key] = lsa
+        self._lsa_db[lsa_type][key] = lsa
 
     def get(self, adrouter: str, lsa_type: int) -> Packet | None:
         """LSA lekérdezése az adatbázisból.
@@ -45,10 +45,10 @@ class LSDB:
         Visszatérési értek:
             lsa (Packet | None): Az LSA csomag.
         """
-        if lsa_type not in self.lsa_db:
-            self.lsa_db[lsa_type] = {}
+        if lsa_type not in self._lsa_db:
+            self._lsa_db[lsa_type] = {}
 
-        lsa = self.lsa_db[lsa_type].get(adrouter, None)
+        lsa = self._lsa_db[lsa_type].get(adrouter, None)
         return lsa
 
     def get_all(self) -> list[Packet]:
@@ -61,17 +61,17 @@ class LSDB:
         """
         packets = []
 
-        for type in self.lsa_db.values():
+        for type in self._lsa_db.values():
             for packet in type.values():
                 packets.append(packet)
 
         return packets
 
     def remove(self, adrouter: str, lsa_type: int) -> None:
-        if lsa_type not in self.lsa_db:
+        if lsa_type not in self._lsa_db:
             return
 
-        existing_lsa = self.lsa_db[lsa_type].get(adrouter, None)
+        existing_lsa = self._lsa_db[lsa_type].get(adrouter, None)
 
         if existing_lsa:
-            del self.lsa_db[lsa_type][adrouter]
+            del self._lsa_db[lsa_type][adrouter]
