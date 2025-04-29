@@ -66,3 +66,12 @@ class LSDB:
                 packets.append(packet)
 
         return packets
+
+    def remove(self, adrouter: str, lsa_type: int) -> None:
+        if lsa_type not in self.lsa_db:
+            return
+
+        existing_lsa = self.lsa_db[lsa_type].get(adrouter, None)
+
+        if existing_lsa:
+            del self.lsa_db[lsa_type][adrouter]
