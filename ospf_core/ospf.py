@@ -660,8 +660,6 @@ class OSPF:
 
         Meghívja a NetworkX Python könyvtárat és annak segítségével kiszámolja a legrövidebb utat minden Router szempontjából.
         (Támogatja az egyforma költségű utakkal való számolást is)
-
-        TODO: Routing tabla beallitasa
         """
         self._build_topology()
 
@@ -687,11 +685,19 @@ class OSPF:
                 if target == self.rid:
                     continue
 
+                intf = self._get_interface_by_rid(path[1])
+                with self._neighbour_table_lock[intf]:
+                    neigbhour = self._get_neighbour(intf= intf, src=path[1])
+
                 self.routing_table[target] = {
-                    'destination' : target,
+                    'destination' : neigbhour.ip,
                     'cost'        : distances[target],
-                    'next_hop'    : path[1]
+                    'next_hop'    : neigbhour.ip,
+                    'interface'   : intf
                 }
+
+                print(f"AAAAAAAAAAAAA {self.routing_table}")
+                self.set_routing_table(self.routing_table)
 
                 self._info_logger.info(
                     f" Legjobb útvonal {source} -> {target}: Út: {path}, Költség: {distances[target]}")
@@ -701,8 +707,33 @@ class OSPF:
                 f"Nincs elérhető útvonal a(z) {self.router_name} egyetlen szomszédjához sem.")
             return
 
+    def _get_interface_by_rid(self, rid: str) -> str | None:
+        """Kikeresi a megadott szomszédhoz tartozó interfészt.
+
+        Paraméterek:
+            rid (str): A keresett szomszéd
+
+        Megjegyzés:
+            - Melyik szomszédot, melyik interfészen fedeztük fel.
+        """
+        for intf, _ in self._neighbour_table.items():
+            with self._neighbour_table_lock[intf]:
+
+                for neighbour in self._neighbour_table[intf]:
+                    if neighbour.rid == rid:
+                        return intf
+        return None
+
+
     def set_routing_table(self, routing_table: dict) -> None:
-        pass
+        """TODO: If any None, hiba és stop"""
+        if None in routing_table.values():
+            self._info_logger.error("Hiba a routing tábla beállítása közben. Leállás...")
+            self.stop()
+
+        for route in routing_table.values():
+            os.system(f"ip route del {route['destination']}")
+            os.system(f"ip route add {route['destination']} via {route['next_hop']} dev {route['interface']}")
 
     def _show_topology(self) -> None:
         """Topológia megjelenítése
