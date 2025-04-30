@@ -1,0 +1,1 @@
+A tesztek futtatása előtt kérem állítsa le a futó programot!
