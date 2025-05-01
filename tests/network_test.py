@@ -4,9 +4,9 @@ from time import sleep
 
 import pytest
 
+from common.utils import get_config
 from network.network_manager import NetworkManager
 from network.topology import Topology
-from common.utils import get_config
 
 
 def test_empty_topology():
@@ -68,5 +68,5 @@ def test_ospf_start():
 
     r1 = test_network_manager._network.getNodeByName('R1')
 
-    running_processes = r1.cmd("ps aux | grep '[o]spf'")
+    running_processes = r1.cmd("sudo ps aux | grep 'ospf'")
     assert "python3" in running_processes, f"OSPF nem fut R1-en. Folyamatok: {running_processes}"

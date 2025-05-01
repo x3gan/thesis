@@ -1,6 +1,5 @@
 from typing import Any
 
-
 from mininet.topo import Topo
 
 

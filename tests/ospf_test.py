@@ -1,6 +1,4 @@
-from unittest.mock import Mock
 from datetime import datetime as dt
-
 
 from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_Link, OSPF_LSUpd
 from scapy.layers.inet import IP
@@ -41,10 +39,10 @@ def test_ospf_initialization():
 
     error_msg = "Hiba a konfiguráció beolvasása közben."
 
-    assert test_ospf.rid == '1.1.1.1', error_msg
-    assert test_ospf.areaid == '0.0.0.0', error_msg
+    assert test_ospf._rid == '1.1.1.1', error_msg
+    assert test_ospf._areaid == '0.0.0.0', error_msg
     assert test_ospf.router_name == 'RT', error_msg
-    assert 'RT-eth0' in test_ospf.interfaces, error_msg
+    assert 'RT-eth0' in test_ospf._interfaces, error_msg
 
 
 
@@ -164,9 +162,9 @@ def test_lsa_packet_creation():
 
     error_msg = "Hiba a Router LSA létrehozása közben."
 
-    test_lsa_packet = test_ospf.lsdb.get(test_ospf.rid, 1)
+    test_lsa_packet = test_ospf._lsdb.get(test_ospf._rid, 1)
     assert test_lsa_packet is not None, error_msg
-    assert test_lsa_packet[OSPF_Router_LSA].adrouter == test_ospf.rid, error_msg
+    assert test_lsa_packet[OSPF_Router_LSA].adrouter == test_ospf._rid, error_msg
     assert test_lsa_packet[OSPF_Router_LSA].seq == 0, error_msg
     assert test_lsa_packet[OSPF_Router_LSA].linkcount == 1, error_msg
     assert test_lsa_packet[OSPF_Router_LSA].linklist[0].id == '2.2.2.2', error_msg
@@ -202,8 +200,8 @@ def test_lsu_packet_creation():
 
     test_lsa_packet = (
         OSPF_Router_LSA(
-            id= test_ospf.rid,
-            adrouter= test_ospf.rid,
+            id= test_ospf._rid,
+            adrouter= test_ospf._rid,
             linkcount= 1,
             linklist= [test_link]
         )
@@ -218,7 +216,7 @@ def test_lsu_packet_creation():
         state=State.FULL
     )
 
-    test_ospf.lsdb.add(test_lsa_packet)
+    test_ospf._lsdb.add(test_lsa_packet)
 
     erro_msg = "Hiba az LSU csomag létrehozása közben."
 
@@ -272,7 +270,7 @@ def test_lsa_packet_processing():
 
     error_msg = "Hiba a Router LSA feldolgozása közben."
 
-    test_existing_lsa = test_ospf.lsdb.get('2.2.2.2', 1)
+    test_existing_lsa = test_ospf._lsdb.get('2.2.2.2', 1)
     assert test_result is True, error_msg
     assert test_existing_lsa[OSPF_Router_LSA].adrouter == '2.2.2.2', error_msg
     assert test_existing_lsa[OSPF_Router_LSA].seq == 1, error_msg

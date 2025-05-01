@@ -1,41 +1,39 @@
-import os
-import sys
-import queue
 import logging
+import os
+import queue
+import sys
 import threading
 import time
+from datetime import datetime as dt
+from datetime import timedelta as td
+from time import sleep
 
 import networkx as nx
-
-from time import sleep
-from datetime import timedelta as td
-from datetime import datetime as dt
-
-from scapy.packet import Packet
-from scapy.layers.l2 import Ether
-from scapy.layers.inet import IP
 from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_Router_LSA, OSPF_LSUpd, OSPF_Link
+from scapy.layers.inet import IP
+from scapy.layers.l2 import Ether
+from scapy.packet import Packet
 
+from common.utils import get_config
+from monitoring.info_logger import InfoLogger
+from monitoring.pcap_logger import PcapLogger
+from network.scapy_interface import ScapyInterface
 from ospf_core.lsdb import LSDB
 from ospf_core.neighbour import Neighbour
 from ospf_core.state import State
-from network.scapy_interface import ScapyInterface
-from monitoring.info_logger import InfoLogger
-from monitoring.pcap_logger import PcapLogger
-from common.utils import get_config
 
 # ---------------------------------------
 # Konstansok és konfigurációk
 # ---------------------------------------
 
-MULTICAST_IP = '224.0.0.5'
+MULTICAST_IP  = '224.0.0.5'
 MULTICAST_MAC = '01:00:5e:00:00:05'
 
-DEAD_INTERVAL = 40
+DEAD_INTERVAL  = 40
 HELLO_INTERVAL = 10
 MAX_QUEUE_SIZE = 1000
 
-CONFIG_PATH = 'config/router.yml'
+CONFIG_PATH  = 'config/router.yml'
 INFO_LOG_DIR = 'logs'
 
 
@@ -55,8 +53,15 @@ def get_interface_mac(name: str) -> str:
     Visszatérési érték:
         mac (str) : Az interfész kiolvasott MAC címe.
     """
-    mac = os.popen(f"cat /sys/class/net/{name}/address").read().strip()
-    return mac
+    try:
+        mac = os.popen(f"cat /sys/class/net/{name}/address").read().strip()
+        return mac
+    except FileNotFoundError:
+        logging.error(f" Interfész {name} nem található.0")
+        return ""
+    except Exception as e:
+        logging.error(f" Váratlan hiba a MAC cím olvasásakor: {str(e)}")
+        return ""
 
 
 def get_interface_status(interface: str) -> bool:
@@ -77,8 +82,12 @@ def get_interface_status(interface: str) -> bool:
             if 'up' in f.read().lower():
                 status = True
             return status
-    except:
-        return False
+    except FileNotFoundError:
+        logging.error(f"Interfész {interface} nem található.")
+        return status
+    except Exception as e:
+        logging.error(f"Váratlan hiba az interfész ellenőrzése közben: {str(e)}")
+        return status
 
 
 def get_device_interfaces_w_mac(name: str, interfaces: list) -> dict:
@@ -104,6 +113,25 @@ def get_device_interfaces_w_mac(name: str, interfaces: list) -> dict:
     return interface_info
 
 
+def set_routing_table(routing_table: dict) -> None:
+    """Routing tábla alapján az útvonal hozzáadása a routerhez."""
+    try:
+        if None in routing_table.values():
+            logging.error(" Hiba a routing tábla beállítása közben. Leállás...")
+            return
+
+        for route in routing_table.values():
+            try:
+                os.system(f"ip route del {route['destination']}")
+                os.system(f"ip route add {route['destination']} via {route['next_hop']} dev {route['interface']}")
+            except Exception as e:
+                logging.error(f" Hiba a routing tábla frissítése közben: {str(e)}")
+
+    except Exception as e:
+        logging.error(f" Váratlan hiba a routing tábla beállítása közben: {str(e)}")
+
+
+
 class OSPF:
     """ A routereken futó OSPF algoritmus logikája.
 
@@ -126,15 +154,13 @@ class OSPF:
         _last_lsa_update (datetime) : Eltárolja mikor érkezett új olyan LSA, amit eltárolunk.
         _stop_event (threading.Event) : Jelzi az OSPF folyamatoknak, hogy le kell állniuk.
         _threads (dict) : Tárolja az egy routeren futó OSPF folyamatok szálait tárolja.
-        _is_running (bool) : Jelzi, hogy az adott routeren fut-e OSPF folyamat.
+        is_running (bool) : Jelzi, hogy az adott routeren fut-e OSPF folyamat.
         _lsa_seq_number_lock (threading.Lock) : Zárolja az LSA szekvenciaszámát, a szálbiztonság érdekében.
         _interfaces_lock (threading.Lock) : A szálbiztonság érdekében zárolja az interfészeket tartalmazó szótárat.
-
-        self._info_logger       = info_logger.logger
-        self._pcap_logger       = PcapLogger()
-        self.network_interface  = interface
-        self.topology           = nx.Graph()
-
+        _info_logger (InfoLogger): A routerek naplófájl-írójának egy példánya.
+        _pcap_logger (PcapLogger): A hálózati csomag naplózó egy példánya.
+        _network_interface (ScapyInterface): Az interfészeken történő közvetlen kommunikációt kezelő osztály.
+        _topology (nx.Graph): A router által felismert topológia.
     """
 
     def __init__(self, name: str, config_path: str, interface: ScapyInterface, info_logger: InfoLogger) -> None:
@@ -142,25 +168,25 @@ class OSPF:
 
         self._config = get_config(config_path)['routers'][self.router_name]
 
-        self.rid        = self._config['rid']
-        self.areaid     = self._config['area']
-        self.interfaces = get_device_interfaces_w_mac(self.router_name, self._config['interfaces'])
+        self._rid        = self._config['rid']
+        self._areaid     = self._config['area']
+        self._interfaces = get_device_interfaces_w_mac(self.router_name, self._config['interfaces'])
 
-        self.lsdb             = LSDB()
-        self.packet_queue     = queue.Queue(maxsize= MAX_QUEUE_SIZE)
-        self._neighbour_table = {intf: [] for intf in self.interfaces}
-        self.routing_table    = {}
-        self.topology         = nx.Graph()
+        self._lsdb             = LSDB()
+        self._packet_queue     = queue.Queue(maxsize= MAX_QUEUE_SIZE)
+        self._neighbour_table = {intf: [] for intf in self._interfaces}
+        self._routing_table    = {}
+        self._topology         = nx.Graph()
 
         self._neighbour_table_global_lock = threading.RLock()
-        self._neighbour_table_lock        = {intf: threading.RLock() for intf in self.interfaces}
-        self.lsa_seq_number_lock          = threading.Lock()
+        self._neighbour_table_lock        = {intf: threading.RLock() for intf in self._interfaces}
+        self._lsa_seq_number_lock          = threading.Lock()
         self._interfaces_lock             = threading.Lock()
         self._lsdb_lock                   = threading.RLock()
         self._routing_table_lock          = threading.RLock()
         self._topology_lock               = threading.RLock()
 
-        self.lsa_sequence_number  = 0
+        self._lsa_sequence_number  = 0
         self.last_lsa_update      = dt.now()
         self._stop_event          = threading.Event()
         self._threads             = {}
@@ -171,7 +197,7 @@ class OSPF:
 
         self._info_logger      = info_logger.logger
         self._pcap_logger      = PcapLogger()
-        self.network_interface = interface
+        self._network_interface = interface
 
     # ----------------------------------------------
     # Hálózati csomagok kezelése
@@ -187,10 +213,10 @@ class OSPF:
         """
         while not self._stop_event.is_set():
             if get_interface_status(intf):
-                packet = self.network_interface.receive(interface=intf)
+                packet = self._network_interface.receive(interface=intf)
 
                 if packet and packet.haslayer(OSPF_Hdr):
-                    self.packet_queue.put((intf, packet), timeout= 1)
+                    self._packet_queue.put((intf, packet), timeout= 1)
                     self._pcap_logger.write_pcap_file(f"{intf}", packet)
 
     def _process_packet(self) -> None:
@@ -201,11 +227,11 @@ class OSPF:
         """
         while not self._stop_event.is_set():
             try:
-                intf, packet = self.packet_queue.get(timeout=1)
+                intf, packet = self._packet_queue.get(timeout=1)
             except queue.Empty:
                 continue
 
-            if self.rid != packet[OSPF_Hdr].src:
+            if self._rid != packet[OSPF_Hdr].src:
                 self._info_logger.info(
                     f" Csomag érkezett a(z) {intf} interfészen: {packet.summary()}")
 
@@ -247,18 +273,18 @@ class OSPF:
         packet = (
                 Ether(
                     dst=MULTICAST_MAC,
-                    src=self.interfaces[intf]['mac']
+                    src=self._interfaces[intf]['mac']
                 ) /
                 IP(
                     dst=MULTICAST_IP,
-                    src=self.interfaces[intf]['ip'],
+                    src=self._interfaces[intf]['ip'],
                     proto=89
                 ) /
                 OSPF_Hdr(
                     version=2,
                     type=1,
-                    src=self.rid,
-                    area=self.areaid
+                    src=self._rid,
+                    area=self._areaid
 
                 ) /
                 OSPF_Hello(
@@ -284,7 +310,7 @@ class OSPF:
             hello_packet = self._create_hello_packet(intf)
 
             if get_interface_status(intf):
-                self.network_interface.send(packet=hello_packet, interface=intf)
+                self._network_interface.send(packet=hello_packet, interface=intf)
                 self._pcap_logger.write_pcap_file(pcap_file=f'{intf}', packet=hello_packet)
 
                 self._info_logger.info(f" Hello csomag küldve {intf} interfészen")
@@ -322,7 +348,7 @@ class OSPF:
 
             neighbour.last_seen = dt.now()
 
-            if self.rid in packet[OSPF_Hello].neighbors and neighbour.state == State.INIT:
+            if self._rid in packet[OSPF_Hello].neighbors and neighbour.state == State.INIT:
                 neighbour.state = State.TWOWAY
 
                 self._info_logger.info(f" {intf} szomszéd 2-WAY: {neighbour.rid}")
@@ -338,11 +364,11 @@ class OSPF:
         """
         if (
                 packet.haslayer(OSPF_Hello) and
-                packet[OSPF_Hdr].area == self.areaid and
+                packet[OSPF_Hdr].area == self._areaid and
                 packet[OSPF_Hello].hellointerval == HELLO_INTERVAL and
                 packet[OSPF_Hello].deadinterval == DEAD_INTERVAL and
                 packet[IP].dst == MULTICAST_IP and
-                packet[OSPF_Hdr].src != self.rid
+                packet[OSPF_Hdr].src != self._rid
         ):
             return True
         return False
@@ -367,31 +393,31 @@ class OSPF:
                 for neighbour in neighbours:
                     if neighbour.state == State.FULL:
                         link = OSPF_Link(
-                            type=link_type,
-                            id=neighbour.rid,
-                            data=self.interfaces[intf]['ip'],
-                            metric=1
+                            type= link_type,
+                            id= neighbour.rid,
+                            data= self._interfaces[intf]['ip'],
+                            metric= 1
                         )
                         links.append(link)
 
-        with self.lsa_seq_number_lock, self._lsdb_lock:
+        with self._lsa_seq_number_lock, self._lsdb_lock:
 
-            existing_lsa = self.lsdb.get(self.rid, link_type)
+            existing_lsa = self._lsdb.get(self._rid, link_type)
             if existing_lsa:
-                self.lsa_sequence_number = existing_lsa.seq + 1
+                self._lsa_sequence_number = existing_lsa.seq + 1
             else:
-                self.lsa_sequence_number = 0
+                self._lsa_sequence_number = 0
 
             lsa = OSPF_Router_LSA(
-                id=self.rid,
-                adrouter=self.rid,
-                seq=self.lsa_sequence_number,
-                linkcount=len(links),
-                linklist=links
+                id= self._rid,
+                adrouter= self._rid,
+                seq= self._lsa_sequence_number,
+                linkcount= len(links),
+                linklist= links
             )
 
-            self.lsa_sequence_number += 1
-            self.lsdb.add(lsa)
+            self._lsa_sequence_number += 1
+            self._lsdb.add(lsa)
 
     def _create_lsu_packet(self, intf: str, neighbour: Neighbour, lsa_list: list) -> Packet:
         """Létrehozza az LSU csomagot az adott interfészre.
@@ -407,18 +433,18 @@ class OSPF:
         packet = (
                 Ether(
                     dst=neighbour.mac,
-                    src=self.interfaces[intf]['mac']
+                    src=self._interfaces[intf]['mac']
                 ) /
                 IP(
                     dst=neighbour.ip,
-                    src=self.interfaces[intf]['ip'],
+                    src=self._interfaces[intf]['ip'],
                     proto=89
                 ) /
                 OSPF_Hdr(
                     version=2,
                     type=4,
-                    src=self.rid,
-                    area=self.areaid
+                    src=self._rid,
+                    area=self._areaid
                 ) / OSPF_LSUpd(
             lsalist=lsa_list
         )
@@ -430,22 +456,23 @@ class OSPF:
         """LSA-k terjesztése.
 
         Paraméterek:
-            intf (str):
-            exclude_rid (str):
+            intf (str): Az interfész amelyiken küldi a csomagot.
+            exclude_rid (str): Az az interfész amelyiktől azt a csomagot kapta amit
+            továbbterjeszt.
         """
 
         if intf is None:
             with self._interfaces_lock:
-                interfaces = list(self.interfaces.keys())
+                interfaces = list(self._interfaces.keys())
             for intf in interfaces:
                 self._flood_lsa(intf)
             return
 
         with self._lsdb_lock:
-            if not self.lsdb.get(self.rid, 1):
+            if not self._lsdb.get(self._rid, 1):
                 self._generate_router_lsa()
 
-            lsa_list = self.lsdb.get_all()
+            lsa_list = self._lsdb.get_all()
 
         with self._neighbour_table_lock[intf]:
             neighbours = list(self._neighbour_table[intf])
@@ -455,13 +482,14 @@ class OSPF:
                 lsu_packet = self._create_lsu_packet(intf, neighbour, lsa_list)
 
                 if get_interface_status(intf):
-                    self.network_interface.send(packet=lsu_packet, interface=intf)
+                    self._network_interface.send(packet=lsu_packet, interface=intf)
                     self._pcap_logger.write_pcap_file(pcap_file=f'{intf}', packet=lsu_packet)
 
                     self._info_logger.info(f" LSUpdate csomag küldve {intf} interfészen")
 
     def _process_lsu(self, packet: Packet) -> None:
-        """
+        """LSUpdate csomag feldolgozása
+
         Paraméterek:
             packet (Packet): Az LSU csomag.
         """
@@ -478,21 +506,25 @@ class OSPF:
             self._flood_lsa(exclude_rid=packet[OSPF_Hdr].src)
 
     def _process_lsa(self, lsa: Packet) -> bool:
-        """
+        """LSA-k feldolgozása
+
         LSA feldolgozása, ha még nem tároltunk róla információt vagy a beérkező információ újabb
         mint az általunk ismert, akkor frissítjük a LSDB-t.
 
-        :param lsa: A beérkező LSA csomag
-        :return:
+        Paraméterek:
+            lsa (Packet): A beérkező LSA csomag.
+
+        Visszatérési érték:
+            _ (bool): Történt-e LSDB frissítés.
         """
         sender_rid = lsa[OSPF_Router_LSA].adrouter
         lsa_type = lsa[OSPF_Router_LSA].type
 
         with self._lsdb_lock:
-            existing_lsa = self.lsdb.get(sender_rid, lsa_type)
+            existing_lsa = self._lsdb.get(sender_rid, lsa_type)
 
             if not existing_lsa or lsa.seq > existing_lsa.seq:
-                self.lsdb.add(lsa)
+                self._lsdb.add(lsa)
                 self.last_lsa_update = dt.now()
 
                 self._info_logger.info(f" {self.router_name} LSDB frissítve: {lsa.summary()}")
@@ -506,7 +538,8 @@ class OSPF:
     # ----------------------------------------------
 
     def _is_down(self, intf: str) -> None:
-        """
+        """Szomszédok elérhetőségét ellenőrzi.
+
         Paraméterek:
             intf (str): Az interfész ahol nézzük a szomszéd állapotát.
 
@@ -518,7 +551,7 @@ class OSPF:
                         neighbour.state = State.DOWN
 
                         with self._lsdb_lock:
-                            self.lsdb.remove(neighbour.rid, 1)
+                            self._lsdb.remove(neighbour.rid, 1)
                         self._info_logger.info(f" Elvesztett a {neighbour.rid} szomszéddal a kapcsolat a(z) {intf} interfészen")
                         self._generate_router_lsa()
                         self._run_spf()
@@ -564,6 +597,8 @@ class OSPF:
                     self._info_logger.info(f" {intf} szomszéd {new_state.name}: {neighbour.rid}")
 
                     if new_state == State.FULL:
+                        self._info_logger.info(f" LSDB szinkronizáció sikeres a(z) {neighbour.rid} szomszéddal")
+
                         self._generate_router_lsa()
                         self._run_spf()
                         self._show_topology()
@@ -631,63 +666,63 @@ class OSPF:
         """
 
         with self._lsdb_lock, self._topology_lock:
-            self.topology.clear()
+            self._topology.clear()
 
-            for lsa in self.lsdb.get_all():
+            for lsa in self._lsdb.get_all():
                 if not isinstance(lsa, OSPF_Router_LSA):
                     continue
 
-                self.topology.add_node(lsa.adrouter)
+                self._topology.add_node(lsa.adrouter)
 
                 for link in lsa.linklist:
-                    self.topology.add_edge(
-                        u_of_edge=lsa.adrouter,
-                        v_of_edge=link.id,
-                        weight=link.metric
+                    self._topology.add_edge(
+                        u_of_edge= lsa.adrouter,
+                        v_of_edge= link.id,
+                        weight= link.metric
                     )
 
     def _run_spf(self) -> None:
-        """Lgrövidebb út kiszámítása.
+        """Legrövidebb út kiszámítása.
 
         Meghívja a NetworkX Python könyvtárat és annak segítségével kiszámolja a legrövidebb utat minden Router szempontjából.
         (Támogatja az egyforma költségű utakkal való számolást is)
         """
         self._build_topology()
 
-        source = self.rid
+        source = self._rid
 
         try:
             paths = nx.shortest_path(
-                G=self.topology,
-                source=source,
-                target=None,
-                weight='weight'
+                G= self._topology,
+                source= source,
+                target= None,
+                weight= 'weight'
             )
 
             distances = nx.shortest_path_length(
-                G=self.topology,
-                source=source,
-                weight='weight'
+                G= self._topology,
+                source= source,
+                weight= 'weight'
             )
 
-            self.routing_table = {}
+            self._routing_table = {}
             for target, path in paths.items():
 
-                if target == self.rid:
+                if target == self._rid:
                     continue
 
                 intf = self._get_interface_by_rid(path[1])
                 with self._neighbour_table_lock[intf]:
                     neigbhour = self._get_neighbour(intf= intf, src=path[1])
 
-                self.routing_table[target] = {
+                self._routing_table[target] = {
                     'destination' : neigbhour.ip,
                     'cost'        : distances[target],
                     'next_hop'    : neigbhour.ip,
                     'interface'   : intf
                 }
 
-                self._set_routing_table(self.routing_table)
+                set_routing_table(self._routing_table)
 
                 self._info_logger.info(
                     f" Legjobb útvonal {source} -> {target}: Út: {path}, Költség: {distances[target]}")
@@ -714,15 +749,6 @@ class OSPF:
                         return intf
         return None
 
-    def _set_routing_table(self, routing_table: dict) -> None:
-        """"""
-        if None in routing_table.values():
-            self._info_logger.error("Hiba a routing tábla beállítása közben. Leállás...")
-            self.stop()
-
-        for route in routing_table.values():
-            os.system(f"ip route del {route['destination']}")
-            os.system(f"ip route add {route['destination']} via {route['next_hop']} dev {route['interface']}")
 
     def _show_topology(self) -> None:
         """Topológia megjelenítése
@@ -732,7 +758,7 @@ class OSPF:
         """
 
         with self._topology_lock:
-            for line in nx.generate_network_text(self.topology):
+            for line in nx.generate_network_text(self._topology):
                 self._info_logger.info(line)
 
     # ----------------------------------------------
@@ -746,22 +772,41 @@ class OSPF:
         OSPF elindítjuk, ha 'DOWN' és fut rajta OSPF akkor azt leállítjuk az adott interfészen.
         """
         while not self._stop_event.is_set():
-            for intf in self.interfaces:
+            for intf in self._interfaces:
                 state = get_interface_status(intf)
 
                 if state and intf not in self._threads:
                     self._start_ospf_threads(intf=intf)
 
                 elif not state and intf in self._threads:
+                    self._remove_intf_data(intf= intf)
                     self._stop_ospf_threads(intf=intf)
 
             time.sleep(5)
+
+    def _remove_intf_data(self, intf: str) -> None:
+        """Interfészen szerzett adatok törlése.
+
+        Interfész leállása esetén eltávolít minden információt amit az adott interfészen szerzett.
+
+        Paraméterek:
+            intf (str): Interfész neve.
+        """
+        with self._neighbour_table_lock[intf], self._lsdb_lock:
+
+            neigbhours = [
+                neighbour.rid for neighbour in self._neighbour_table[intf]
+            ]
+            self._neighbour_table[intf].clear()
+
+            for neighbour_rid in neigbhours:
+                self._lsdb.remove(neighbour_rid, 1)
 
     def _start_ospf_threads(self, intf: str) -> None:
         """Elindítja az adott router OSPF folyamatait kezelő szálakat,"""
         if intf in self._threads or not get_interface_status(intf):
             return
-
+        
         self._threads[intf] = {
             'listen': threading.Thread(target=self._listen, args=(intf,),
                                        name=f"ListenerThread-{intf}"),
@@ -777,7 +822,8 @@ class OSPF:
             try:
                 thread.start()
             except Exception as e:
-                self._info_logger.error(f"Hiba a {thread.name} szal elinditasa kozben: {str(e)}")
+                self._info_logger.error(f" Hiba a {thread.name} szal elinditasa kozben: {str(e)}")
+                self._stop_ospf_threads(intf= intf)
 
     def start(self) -> None:
         """Elindítja az OSPF folyamatot.
@@ -789,7 +835,7 @@ class OSPF:
         self._stop_event.clear()
         self._threads.clear()
 
-        for interface in self.interfaces:
+        for interface in self._interfaces:
             if get_interface_status(interface):
                 self._start_ospf_threads(interface)
 
