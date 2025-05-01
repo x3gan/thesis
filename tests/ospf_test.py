@@ -26,7 +26,7 @@ class MockInfoLogger:
 
 
 def test_ospf_initialization():
-    """Teszt 1: Létrejön az OSPF-et kezelő osztály a konfigurációs fájl alapján"""
+    """Teszt 1: Unit teszt - Létrejön az OSPF-et kezelő osztály a konfigurációs fájl alapján"""
     mock_interface = MockInterface()
     mock_logger = MockInfoLogger()
 
@@ -45,9 +45,8 @@ def test_ospf_initialization():
     assert 'RT-eth0' in test_ospf._interfaces, error_msg
 
 
-
 def test_hello_packet_creation():
-    """Teszt 2: Létrejön az OSPF Hello csomagot."""
+    """Teszt 2: Unit teszt - Létrejön az OSPF Hello csomagot."""
     mock_interface = MockInterface()
     mock_logger = MockInfoLogger()
 
@@ -77,7 +76,7 @@ def test_hello_packet_creation():
     assert test_hello_packet[OSPF_Hello].deadinterval == 40, error_msg
 
 def test_hello_packet_processing():
-    """Teszt 3: Feldolgozza a beérkezett OSPF csomagot."""
+    """Teszt 3: Unit teszt - Feldolgozza a beérkezett OSPF csomagot."""
     mock_interface = MockInterface()
     mock_logger = MockInfoLogger()
 
@@ -129,7 +128,7 @@ def test_hello_packet_processing():
 
 
 def test_lsa_packet_creation():
-    """Teszt 4: LSA létrehozása."""
+    """Teszt 4: Unit teszt -  LSA létrehozása."""
     mock_interface = MockInterface()
     mock_logger = MockInfoLogger()
 
@@ -171,7 +170,7 @@ def test_lsa_packet_creation():
 
 
 def test_lsu_packet_creation():
-    """Teszt 5: Létrehozza az LS Update csomagot."""
+    """Teszt 5: Unit teszt - Létrehozza az LS Update csomagot."""
     mock_interface = MockInterface()
     mock_logger = MockInfoLogger()
 
@@ -229,7 +228,7 @@ def test_lsu_packet_creation():
     assert test_lsu_packet[OSPF_LSUpd].lsalist[0].adrouter == "1.1.1.1", erro_msg
 
 def test_lsa_packet_processing():
-    """Teszt 6: Feldolgozza az LSU-ban kapott LSA-t és frissíti az LSDB-t."""
+    """Teszt 6: Unit teszt - Feldolgozza az LSU-ban kapott LSA-t és frissíti az LSDB-t."""
     mock_interface = MockInterface()
     mock_logger = MockInfoLogger()
 
