@@ -22,6 +22,10 @@ class MockInfoLogger:
     def __init__(self):
         self.logger = self
 
+    def info(self, msg):
+        """Mock info metódus."""
+        pass
+
 
 def test_ospf_initialization():
     """Teszt 1: Létrejön az OSPF-et kezelő osztály a konfigurációs fájl alapján"""
@@ -127,7 +131,7 @@ def test_hello_packet_processing():
 
 
 def test_lsa_packet_creation():
-    """Teszt 4: LSA csomag létrehozása."""
+    """Teszt 4: LSA létrehozása."""
     mock_interface = MockInterface()
     mock_logger = MockInfoLogger()
 

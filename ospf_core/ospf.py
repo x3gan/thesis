@@ -54,9 +54,6 @@ def get_interface_mac(name: str) -> str:
 
     Visszatérési érték:
         mac (str) : Az interfész kiolvasott MAC címe.
-    TODO: network/network_utils
-
-    TODO: Error hadnling
     """
     mac = os.popen(f"cat /sys/class/net/{name}/address").read().strip()
     return mac
@@ -73,8 +70,6 @@ def get_interface_status(interface: str) -> bool:
 
     Visszatérési érték:
         status (bool) : True-t ad vissza, ha a kért interfész UP állapotban van.
-        TODO: network/network_utils
-
     """
     status = False
     try:
@@ -95,7 +90,6 @@ def get_device_interfaces_w_mac(name: str, interfaces: list) -> dict:
     Paraméterek:
         name (str): A router neve.
         interfaces (list): A router konfigurációjához megadott
-        TODO: network/network_utils
     """
     interface_info = {}
 
@@ -141,7 +135,6 @@ class OSPF:
         self.network_interface  = interface
         self.topology           = nx.Graph()
 
-        TODO: pcap logger dependency
     """
 
     def __init__(self, name: str, config_path: str, interface: ScapyInterface, info_logger: InfoLogger) -> None:
@@ -302,7 +295,7 @@ class OSPF:
     def _process_hello(self, intf: str, packet: Packet) -> None:
         """Feldolgozza a Hello típusú csomagokat.
 
-        A sroból kivett csomagot típus szerint Hello csomagként feldolgozza. Kiszedi a küldő
+        A sorból kivett csomagot típus szerint Hello csomagként feldolgozza. Kiszedi a küldő
         router információit az OSPF rétegekből és tárolja el róla az információkat a
         _neighbour_table szótárba.
 
@@ -500,7 +493,6 @@ class OSPF:
 
             if not existing_lsa or lsa.seq > existing_lsa.seq:
                 self.lsdb.add(lsa)
-                print(self.lsdb.get_all())
                 self.last_lsa_update = dt.now()
 
                 self._info_logger.info(f" {self.router_name} LSDB frissítve: {lsa.summary()}")
@@ -547,7 +539,6 @@ class OSPF:
             - A simább állapotváltás érdekében mindig várunk legalább 1 másodpercet.
             - LOADING állapotban: Adatbázis szinkronizációt szimulálunk.
 
-        TODO: init - twoway is itt legyen
         """
         state_map = {
             State.TWOWAY : State.EXSTART,
@@ -696,8 +687,7 @@ class OSPF:
                     'interface'   : intf
                 }
 
-                print(f"AAAAAAAAAAAAA {self.routing_table}")
-                self.set_routing_table(self.routing_table)
+                self._set_routing_table(self.routing_table)
 
                 self._info_logger.info(
                     f" Legjobb útvonal {source} -> {target}: Út: {path}, Költség: {distances[target]}")
@@ -724,9 +714,8 @@ class OSPF:
                         return intf
         return None
 
-
-    def set_routing_table(self, routing_table: dict) -> None:
-        """TODO: If any None, hiba és stop"""
+    def _set_routing_table(self, routing_table: dict) -> None:
+        """"""
         if None in routing_table.values():
             self._info_logger.error("Hiba a routing tábla beállítása közben. Leállás...")
             self.stop()
@@ -795,8 +784,6 @@ class OSPF:
 
         Kitörli a hálózati csomagok log fájljait és visszaállítja a leállítási event flag-et.
         Létrehozza a szükséges threadeket és az azokon futó folyamatokat, majd elindítja azokat.
-
-        TODO: ThreadPool
         """
         self._pcap_logger.cleanup(self.router_name)
         self._stop_event.clear()

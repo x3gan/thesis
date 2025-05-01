@@ -22,7 +22,7 @@ class NetworkManager:
         _config (dict):  Betöltött hálózati konfiguráció.
         _topology (Topology): Mininet topológia.
         _network (Mininet): Mininet hálózati példány.
-        _logmonitor (LogMonitor): NAplófigyelő példány.
+        _logmonitor (LogMonitor): Naplófigyelő példány.
     """
 
     def __init__(self) -> None:
@@ -34,7 +34,7 @@ class NetworkManager:
                 topo= self._topology
             )
         except Exception:
-            logging.error(" Már fut másik Mininet folyamat: Futtasd a 'sudo mn -c' parancsot, "
+            logging.error(" Már fut másik Mininet folyamat: Futtassa a 'sudo mn -c' parancsot, "
                           "hogy leállítsd a sikertelenül leállt folyamatot. ")
 
         self._log_monitor = LogMonitor(
@@ -55,8 +55,9 @@ class NetworkManager:
             self._configure_interfaces()
             print("***** A hálózat elindult. *****")
 
-            self._log_monitor.start()
-            print("***** A LogMonitor elindult. *****")
+            if mode == 'auto':
+                self._log_monitor.start()
+                print("***** A LogMonitor elindult. *****")
 
             if mode == 'auto':
                 self._start_ospf()
@@ -68,6 +69,7 @@ class NetworkManager:
         except KeyboardInterrupt:
             self._log_monitor.stop()
             if mode == 'auto':
+                print("A leállításhoz írjon 'exit'-et.")
                 CLI(self._network)
 
             print("\n***** Kilépés... *****")
