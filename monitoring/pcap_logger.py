@@ -5,6 +5,7 @@ from pathlib import Path
 from scapy.packet import Packet
 from scapy.utils import PcapWriter
 
+
 class PcapLogger:
     """PCAP fájlok kezelésére szolgáló osztály.
     

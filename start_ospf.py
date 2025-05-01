@@ -5,7 +5,6 @@ from monitoring.info_logger import InfoLogger
 from network.scapy_interface import ScapyInterface
 from ospf_core.ospf import OSPF
 
-
 CONFIG_PATH  = 'config/router.yml'
 INFO_LOG_DIR = 'logs'
 

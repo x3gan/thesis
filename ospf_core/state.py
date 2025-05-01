@@ -2,9 +2,9 @@ from enum import Enum
 
 
 class State( Enum ):
-    """OSPF szomszédállapotokat definiűló felsoroló.
+    """OSPF szomszédállapotokat definiáló felsoroló.
 
-    Az OSPFv2 dokumentáció szerint
+    Az OSPFv2 dokumentáció szerint.
     """
     DOWN     = 'DOWN'
     INIT     = 'INIT'

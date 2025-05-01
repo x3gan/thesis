@@ -1,9 +1,3 @@
-import os
-import socket
-import fcntl
-import struct
-
-from scapy.utils import PcapWriter
 from yaml import safe_load
 
 
@@ -12,12 +6,23 @@ def get_config(filepath: str) -> dict | None:
 
     Paraméterek:
         filepath (str): A konfigurációs fájl útvonala.
+
+    Visszatérési érték:
+        config (dict | None): A konfigurációs fájl beolvasott tartalma.
     """
+    config = None
     with open(filepath, 'r') as file:
         config = safe_load(file)
 
     if is_config_valid(config):
         return config
 
+    return None
+
+
 def is_config_valid(config: dict) -> bool:
-    return True
+    if "routers" in config:
+        return True
+
+    return False
+

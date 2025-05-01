@@ -1,7 +1,7 @@
 import logging
 import os
-import time
 import threading
+import time
 from pathlib import Path
 
 REFRESH_INTERVAL = 0.1  # másodperc

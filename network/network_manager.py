@@ -1,14 +1,13 @@
 import logging
 import os
-import sys
 from time import sleep
 
 from mininet.cli import CLI
 from mininet.net import Mininet
 
+from common.utils import get_config
 from monitoring.log_monitor import LogMonitor
 from .topology import Topology
-from common.utils import get_config
 
 CONFIG_PATH = 'config/router.yml'
 
@@ -69,7 +68,7 @@ class NetworkManager:
         except KeyboardInterrupt:
             self._log_monitor.stop()
             if mode == 'auto':
-                print("A leállításhoz írjon 'exit'-et.")
+                print("\nA leállításhoz írjon 'exit'-et.")
                 CLI(self._network)
 
             print("\n***** Kilépés... *****")
