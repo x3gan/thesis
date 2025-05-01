@@ -10,7 +10,7 @@ from network.topology import Topology
 
 
 def test_empty_topology():
-    """Teszt 1: Ha megvannak a szükséges paraméterek, betölti a konfigurációt."""
+    """Teszt 1: Unit teszt - Ha megvannak a szükséges paraméterek, betölti a konfigurációt."""
     test_empty_config = get_config('tests/config/network_test1.yml')
 
     test_topology = Topology(config= test_empty_config)
@@ -19,7 +19,7 @@ def test_empty_topology():
 
 
 def test_config_topology():
-    """Teszt 2: A konfigurációs fájl alapján a topológiába kerülnek a routerek és a linkek."""
+    """Teszt 2: Unit teszt - A konfigurációs fájl alapján a topológiába kerülnek a routerek és a linkek."""
     test_router_config = get_config('tests/config/network_test2.yml')
 
     test_topology = Topology(config= test_router_config)
@@ -30,7 +30,7 @@ def test_config_topology():
 
 @pytest.mark.skipif(os.getuid() != 0, reason="Mininet requires root")
 def test_network_manager_create():
-    """Teszt 3: Létrejön a NetworkManager a Mininet virtuális hálózattal."""
+    """Teszt 3: Integrációs teszt - Létrejön a NetworkManager a Mininet virtuális hálózattal."""
     test_network_manager = NetworkManager()
 
     assert test_network_manager._topology, "Nem tudott létrejönni a topológia."
@@ -39,8 +39,7 @@ def test_network_manager_create():
 
 @pytest.mark.skipif(os.getuid() != 0, reason="Mininet requires root")
 def test_router_network_manager():
-    """Teszt 4: A virtuális hálózatban résztvevő routerek interfészei a konfigurációs fájl
-    alapján állítódtak be."""
+    """Teszt 4: Integrációs teszt - A virtuális hálózatban résztvevő routerek interfészei a konfigurációs fájl alapján állítódtak be."""
     test_network_manager = NetworkManager()
     error_msg = "Hibás konfiguráció."
 
@@ -59,7 +58,7 @@ def test_router_network_manager():
 
 @pytest.mark.skipif(os.getuid() != 0, reason="Mininet requires root")
 def test_ospf_start():
-    """Teszt 5: Ha elindul a NetworkManager, elindul az OSPF is a routereken."""
+    """Teszt 5: Integrációs teszt - Ha elindul a NetworkManager, elindul az OSPF is a routereken."""
     test_network_manager = NetworkManager()
     test_network_manager._network.start()
     test_network_manager._start_ospf()

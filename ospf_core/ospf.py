@@ -458,7 +458,7 @@ class OSPF:
         Paraméterek:
             intf (str): Az interfész amelyiken küldi a csomagot.
             exclude_rid (str): Az az interfész amelyiktől azt a csomagot kapta amit
-            továbbterjeszt.
+            tovább terjeszt.
         """
 
         if intf is None:
