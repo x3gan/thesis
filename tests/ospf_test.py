@@ -41,7 +41,7 @@ def test_ospf_initialization():
 
     assert test_ospf._rid == '1.1.1.1', error_msg
     assert test_ospf._areaid == '0.0.0.0', error_msg
-    assert test_ospf.router_name == 'RT', error_msg
+    assert test_ospf._router_name == 'RT', error_msg
     assert 'RT-eth0' in test_ospf._interfaces, error_msg
 
 

@@ -164,13 +164,13 @@ class OSPF:
     """
 
     def __init__(self, name: str, config_path: str, interface: ScapyInterface, info_logger: InfoLogger) -> None:
-        self.router_name = name
+        self._router_name = name
 
-        self._config = get_config(config_path)['routers'][self.router_name]
+        self._config = get_config(config_path)['routers'][self._router_name]
 
         self._rid        = self._config['rid']
         self._areaid     = self._config['area']
-        self._interfaces = get_device_interfaces_w_mac(self.router_name, self._config['interfaces'])
+        self._interfaces = get_device_interfaces_w_mac(self._router_name, self._config['interfaces'])
 
         self._lsdb             = LSDB()
         self._packet_queue     = queue.Queue(maxsize= MAX_QUEUE_SIZE)
@@ -527,7 +527,7 @@ class OSPF:
                 self._lsdb.add(lsa)
                 self.last_lsa_update = dt.now()
 
-                self._info_logger.info(f" {self.router_name} LSDB frissítve: {lsa.summary()}")
+                self._info_logger.info(f" {self._router_name} LSDB frissítve: {lsa.summary()}")
 
                 return True
 
@@ -729,7 +729,7 @@ class OSPF:
 
         except nx.NetworkXNoPath:
             logging.error(
-                f"Nincs elérhető útvonal a(z) {self.router_name} egyetlen szomszédjához sem.")
+                f"Nincs elérhető útvonal a(z) {self._router_name} egyetlen szomszédjához sem.")
             return
 
     def _get_interface_by_rid(self, rid: str) -> str | None:
@@ -831,7 +831,7 @@ class OSPF:
         Kitörli a hálózati csomagok log fájljait és visszaállítja a leállítási event flag-et.
         Létrehozza a szükséges threadeket és az azokon futó folyamatokat, majd elindítja azokat.
         """
-        self._pcap_logger.cleanup(self.router_name)
+        self._pcap_logger.cleanup(self._router_name)
         self._stop_event.clear()
         self._threads.clear()
 
